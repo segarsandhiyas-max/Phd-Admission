@@ -1,0 +1,182 @@
+/* Form-II Experience Certificate Styling */
+
+.form-ii-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background-color: #f5f5f5;
+  padding: 20px;
+}
+
+.form-ii-page {
+  width: 210mm; /* A4 width */
+  min-height: 297mm; /* A4 height */
+  background: white;
+  padding: 25mm 20mm;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+  font-family: 'Times New Roman', Times, serif;
+  font-size: 12pt;
+  line-height: 1.6;
+  color: #000;
+}
+
+.form-ii-title {
+  text-align: center;
+  font-size: 14pt;
+  font-weight: bold;
+  margin: 0 0 10px 0;
+}
+
+.form-ii-subtext {
+  text-align: center;
+  font-size: 11pt;
+  margin: 5px 0;
+}
+
+.form-ii-header-note {
+  text-align: left;
+  font-size: 10pt;
+  font-style: italic;
+  margin: 20px 0;
+  color: #333;
+}
+
+.form-ii-subtitle {
+  text-align: center;
+  font-size: 14pt;
+  font-weight: bold;
+  margin: 20px 0;
+  text-decoration: underline;
+}
+
+.form-ii-body {
+  text-align: left;
+}
+
+.form-ii-paragraph {
+  text-align: justify;
+  margin: 15px 0;
+  line-height: 1.8;
+}
+
+.form-ii-input {
+  border: none;
+  border-bottom: 1px solid #000;
+  background: transparent;
+  font-family: 'Times New Roman', Times, serif;
+  font-size: 12pt;
+  padding: 0 5px;
+  min-width: 150px;
+  outline: none;
+}
+
+.form-ii-input-small {
+  border: none;
+  border-bottom: 1px solid #000;
+  background: transparent;
+  font-family: 'Times New Roman', Times, serif;
+  font-size: 12pt;
+  padding: 0 5px;
+  width: 60px;
+  outline: none;
+}
+
+.form-ii-input-date {
+  border: none;
+  border-bottom: 1px solid #000;
+  background: transparent;
+  font-family: 'Times New Roman', Times, serif;
+  font-size: 12pt;
+  padding: 0 5px;
+  width: 120px;
+  outline: none;
+}
+
+.form-ii-input::placeholder,
+.form-ii-input-small::placeholder,
+.form-ii-input-date::placeholder {
+  color: #ccc;
+}
+
+.form-ii-signature-section {
+  margin-top: 60px;
+  text-align: right;
+}
+
+.form-ii-signature {
+  margin: 0 0 30px 0;
+  text-align: right;
+  line-height: 1.5;
+}
+
+.form-ii-date {
+  margin: 0;
+  text-align: right;
+}
+
+.form-ii-footnote {
+  text-align: justify;
+  margin-top: 40px;
+  font-size: 11pt;
+  line-height: 1.6;
+}
+
+.form-ii-actions {
+  margin-top: 30px;
+  text-align: center;
+}
+
+.btn-print {
+  padding: 12px 30px;
+  background-color: #2563eb;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  font-size: 14px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.btn-print:hover {
+  background-color: #1d4ed8;
+}
+
+/* Print Styles */
+@media print {
+  .form-ii-container {
+    background: white;
+    padding: 0;
+  }
+
+  .form-ii-page {
+    box-shadow: none;
+    margin: 0;
+    padding: 15mm 20mm;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .form-ii-input,
+  .form-ii-input-small,
+  .form-ii-input-date {
+    border-bottom: 1px solid #000;
+    color: #000;
+  }
+}
+
+/* Responsive */
+@media screen and (max-width: 768px) {
+  .form-ii-page {
+    width: 100%;
+    min-height: auto;
+    padding: 20px;
+  }
+
+  .form-ii-input {
+    min-width: 120px;
+    display: inline-block;
+  }
+}

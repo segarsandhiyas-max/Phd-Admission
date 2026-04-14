@@ -1,0 +1,167 @@
+/* Form-I NOC Certificate Styling */
+
+.form-i-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background-color: #f5f5f5;
+  padding: 20px;
+}
+
+.form-i-page {
+  width: 210mm; /* A4 width */
+  min-height: 297mm; /* A4 height */
+  background: white;
+  padding: 25mm 20mm;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+  font-family: 'Times New Roman', Times, serif;
+  font-size: 12pt;
+  line-height: 1.6;
+  color: #000;
+}
+
+.form-i-header-note {
+  text-align: left;
+  font-size: 10pt;
+  font-style: italic;
+  margin-bottom: 20px;
+  color: #333;
+}
+
+.form-i-title {
+  text-align: center;
+  font-size: 14pt;
+  font-weight: bold;
+  margin: 0 0 20px 0;
+}
+
+.form-i-subtitle {
+  text-align: center;
+  font-size: 14pt;
+  font-weight: bold;
+  margin: 20px 0 5px 0;
+  text-decoration: underline;
+}
+
+.form-i-subtext {
+  text-align: center;
+  font-size: 11pt;
+  margin: 0 0 30px 0;
+}
+
+.form-i-body {
+  text-align: left;
+}
+
+.form-i-to {
+  margin: 2px 0;
+  text-align: left;
+}
+
+.form-i-paragraph {
+  text-align: justify;
+  margin: 15px 0;
+  line-height: 1.8;
+}
+
+.form-i-input {
+  border: none;
+  border-bottom: 1px solid #000;
+  background: transparent;
+  font-family: 'Times New Roman', Times, serif;
+  font-size: 12pt;
+  padding: 0 5px;
+  min-width: 200px;
+  outline: none;
+}
+
+.form-i-input-small {
+  border: none;
+  border-bottom: 1px solid #000;
+  background: transparent;
+  font-family: 'Times New Roman', Times, serif;
+  font-size: 12pt;
+  padding: 0 5px;
+  width: 60px;
+  outline: none;
+}
+
+.form-i-input::placeholder,
+.form-i-input-small::placeholder {
+  color: #ccc;
+}
+
+.form-i-signature-section {
+  margin-top: 60px;
+  text-align: right;
+}
+
+.form-i-signature {
+  margin: 0 0 30px 0;
+  text-align: right;
+  line-height: 1.5;
+}
+
+.form-i-date {
+  margin: 0;
+  text-align: right;
+}
+
+.form-i-actions {
+  margin-top: 30px;
+  text-align: center;
+}
+
+.btn-print {
+  padding: 12px 30px;
+  background-color: #2563eb;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  font-size: 14px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.btn-print:hover {
+  background-color: #1d4ed8;
+}
+
+/* Print Styles */
+@media print {
+  .form-i-container {
+    background: white;
+    padding: 0;
+  }
+
+  .form-i-page {
+    box-shadow: none;
+    margin: 0;
+    padding: 15mm 20mm;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .form-i-input,
+  .form-i-input-small {
+    border-bottom: 1px solid #000;
+    color: #000;
+  }
+}
+
+/* Responsive */
+@media screen and (max-width: 768px) {
+  .form-i-page {
+    width: 100%;
+    min-height: auto;
+    padding: 20px;
+  }
+
+  .form-i-input {
+    min-width: 150px;
+    display: inline-block;
+  }
+}

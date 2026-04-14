@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Users API Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .button-group {
+            margin-bottom: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            margin-right: 10px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .response {
+            background: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            margin-top: 20px;
+            max-height: 500px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .error {
+            background: #fee;
+            border-color: #fcc;
+            color: #c00;
+        }
+        .success {
+            background: #efe;
+            border-color: #cfc;
+            color: #060;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        table, th, td {
+            border: 1px solid #ddd;
+        }
+        th, td {
+            padding: 10px;
+            text-align: left;
+        }
+        th {
+            background: #f0f0f0;
+        }
+        .token-info {
+            background: #e3f2fd;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 Admin Users API Test</h1>
+        
+        <div class="token-info">
+            <p><strong>Status:</strong> <span id="status">Not logged in</span></p>
+            <p><strong>User:</strong> <span id="user-info">-</span></p>
+        </div>
+
+        <div class="button-group">
+            <button onclick="register()">1. Register as Admin</button>
+            <button onclick="login()">2. Login</button>
+            <button onclick="fetchUsers()">3. Fetch Users</button>
+            <button onclick="clearData()">Clear Response</button>
+        </div>
+
+        <div id="response" class="response" style="display: none;"></div>
+
+        <div id="users-table-container"></div>
+    </div>
+
+    <script>
+        let token = localStorage.getItem('token');
+        let currentUser = localStorage.getItem('user');
+
+        function updateStatus() {
+            if (token) {
+                document.getElementById('status').textContent = '✅ Logged In';
+                document.getElementById('user-info').textContent = currentUser || 'Unknown';
+            } else {
+                document.getElementById('status').textContent = '❌ Not Logged In';
+                document.getElementById('user-info').textContent = '-';
+            }
+        }
+
+        async function register() {
+            const response = document.getElementById('response');
+            response.style.display = 'block';
+            response.className = 'response';
+            response.textContent = '⏳ Registering admin user...\n';
+
+            try {
+                const res = await fetch('http://localhost:8000/api/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email: 'admin.test@example.com',
+                        full_name: 'Admin Test User',
+                        password: 'Admin@123',
+                        role: 'admin',
+                        department: 'Administration',
+                        phone: '9999999999'
+                    })
+                });
+
+                const data = await res.json();
+                
+                if (res.ok) {
+                    response.className = 'response success';
+                    response.textContent = '✅ Registration Successful!\n\n' + JSON.stringify(data, null, 2);
+                } else {
+                    response.className = 'response error';
+                    response.textContent = '❌ Registration Failed!\n\n' + JSON.stringify(data, null, 2);
+                }
+            } catch (error) {
+                response.className = 'response error';
+                response.textContent = '❌ Error: ' + error.message;
+            }
+        }
+
+        async function login() {
+            const response = document.getElementById('response');
+            response.style.display = 'block';
+            response.className = 'response';
+            response.textContent = '⏳ Logging in...\n';
+
+            try {
+                const formData = new FormData();
+                formData.append('username', 'admin.test@example.com');
+                formData.append('password', 'Admin@123');
+
+                const res = await fetch('http://localhost:8000/api/login', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await res.json();
+                
+                if (res.ok) {
+                    token = data.access_token;
+                    currentUser = data.user.full_name;
+                    localStorage.setItem('token', token);
+                    localStorage.setItem('user', currentUser);
+                    updateStatus();
+                    
+                    response.className = 'response success';
+                    response.textContent = '✅ Login Successful!\n\n' + JSON.stringify(data, null, 2);
+                    
+                    // Auto fetch users after login
+                    setTimeout(fetchUsers, 1000);
+                } else {
+                    response.className = 'response error';
+                    response.textContent = '❌ Login Failed!\n\n' + JSON.stringify(data, null, 2);
+                }
+            } catch (error) {
+                response.className = 'response error';
+                response.textContent = '❌ Error: ' + error.message;
+            }
+        }
+
+        async function fetchUsers() {
+            const response = document.getElementById('response');
+            response.style.display = 'block';
+            response.className = 'response';
+            response.textContent = '⏳ Fetching users...\n';
+
+            if (!token) {
+                response.className = 'response error';
+                response.textContent = '❌ Error: Not logged in. Please login first.';
+                return;
+            }
+
+            try {
+                const res = await fetch('http://localhost:8000/api/admin/users', {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const data = await res.json();
+                
+                if (res.ok) {
+                    response.className = 'response success';
+                    response.textContent = '✅ Users Fetched Successfully!\n\nTotal Users: ' + data.total + '\n\n' + JSON.stringify(data, null, 2);
+                    
+                    // Display as table
+                    displayUsersTable(data.users);
+                } else {
+                    response.className = 'response error';
+                    response.textContent = '❌ Failed to fetch users!\n\n' + JSON.stringify(data, null, 2);
+                }
+            } catch (error) {
+                response.className = 'response error';
+                response.textContent = '❌ Error: ' + error.message;
+            }
+        }
+
+        function displayUsersTable(users) {
+            const container = document.getElementById('users-table-container');
+            if (users.length === 0) {
+                container.innerHTML = '<p>No users found</p>';
+                return;
+            }
+
+            let html = '<h2>Users Data:</h2><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Department</th><th>Phone</th><th>Status</th><th>Created</th></tr></thead><tbody>';
+            
+            users.forEach(user => {
+                html += `<tr>
+                    <td>${user.full_name || '-'}</td>
+                    <td>${user.email || '-'}</td>
+                    <td>${user.role || '-'}</td>
+                    <td>${user.department || '-'}</td>
+                    <td>${user.phone || '-'}</td>
+                    <td>${user.is_active ? 'Active' : 'Inactive'}</td>
+                    <td>${user.created_at ? new Date(user.created_at).toLocaleDateString() : '-'}</td>
+                </tr>`;
+            });
+
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+
+        function clearData() {
+            document.getElementById('response').style.display = 'none';
+            document.getElementById('users-table-container').innerHTML = '';
+        }
+
+        // Initialize on page load
+        updateStatus();
+    </script>
+</body>
+</html>

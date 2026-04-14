@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Dashboard Debug</title>
+    <style>
+        body { font-family: monospace; background: #f5f5f5; padding: 20px; }
+        .container { background: white; padding: 20px; border-radius: 8px; }
+        pre { background: #f0f0f0; padding: 10px; overflow-x: auto; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Admin Dashboard Debug</h1>
+        
+        <h2>1. Test Login</h2>
+        <button onclick="testLogin()">Login as Admin</button>
+        <pre id="loginResult"></pre>
+        
+        <h2>2. Fetch Users</h2>
+        <button onclick="testFetchUsers()">Fetch Users (requires login first)</button>
+        <pre id="usersResult"></pre>
+        
+        <h2>3. Fetch Statistics</h2>
+        <button onclick="testFetchStats()">Fetch Statistics</button>
+        <pre id="statsResult"></pre>
+    </div>
+
+    <script>
+        let token = null;
+
+        async function testLogin() {
+            try {
+                const response = await fetch('http://localhost:8000/api/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    },
+                    body: 'username=admin@phd.edu&password=admin@123'
+                });
+
+                const data = await response.json();
+                token = data.access_token;
+                
+                document.getElementById('loginResult').textContent = 
+                    'Status: ' + response.status + '\n' +
+                    'Token: ' + token.substring(0, 20) + '...\n' +
+                    'User: ' + data.user.full_name + ' (' + data.user.email + ')';
+            } catch (error) {
+                document.getElementById('loginResult').textContent = 'Error: ' + error.message;
+            }
+        }
+
+        async function testFetchUsers() {
+            if (!token) {
+                document.getElementById('usersResult').textContent = 'Error: Not logged in. Click Login first.';
+                return;
+            }
+
+            try {
+                const response = await fetch('http://localhost:8000/api/admin/users', {
+                    headers: {
+                        'Authorization': 'Bearer ' + token
+                    }
+                });
+
+                const data = await response.json();
+                
+                document.getElementById('usersResult').textContent = 
+                    'Status: ' + response.status + '\n' +
+                    'Total Users: ' + data.total + '\n\n' +
+                    'Users Array:\n' +
+                    JSON.stringify(data.users, null, 2);
+            } catch (error) {
+                document.getElementById('usersResult').textContent = 'Error: ' + error.message;
+            }
+        }
+
+        async function testFetchStats() {
+            if (!token) {
+                document.getElementById('statsResult').textContent = 'Error: Not logged in. Click Login first.';
+                return;
+            }
+
+            try {
+                const response = await fetch('http://localhost:8000/api/admin/statistics', {
+                    headers: {
+                        'Authorization': 'Bearer ' + token
+                    }
+                });
+
+                const data = await response.json();
+                
+                document.getElementById('statsResult').textContent = 
+                    'Status: ' + response.status + '\n\n' +
+                    JSON.stringify(data, null, 2);
+            } catch (error) {
+                document.getElementById('statsResult').textContent = 'Error: ' + error.message;
+            }
+        }
+    </script>
+</body>
+</html>

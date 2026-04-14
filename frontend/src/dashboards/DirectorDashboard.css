@@ -1,0 +1,194 @@
+.director-folder-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-bottom: 30px;
+}
+
+.department-folder-card {
+  background: #ffffff;
+  border: 1px solid #dbe5ff;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+}
+
+.department-folder-header {
+  width: 100%;
+  border: none;
+  background: linear-gradient(120deg, #f8fbff 0%, #eef4ff 100%);
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.department-folder-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.folder-icon {
+  font-size: 24px;
+}
+
+.department-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1e40af;
+}
+
+.department-folder-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.department-count {
+  font-weight: 600;
+  color: #334155;
+}
+
+.folder-chevron {
+  color: #475569;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.department-folder-content {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height 0.35s ease, opacity 0.25s ease;
+}
+
+.department-folder-content.expanded {
+  max-height: 2400px;
+  opacity: 1;
+}
+
+.student-folder-list {
+  padding: 14px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.student-folder-card {
+  margin-left: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+.student-folder-header {
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.student-folder-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.student-icon {
+  font-size: 18px;
+}
+
+.student-registration {
+  color: #1e3a8a;
+  font-weight: 700;
+}
+
+.student-name {
+  color: #334155;
+  font-weight: 600;
+}
+
+.student-folder-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.student-folder-content {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  border-top: 1px solid transparent;
+  transition: max-height 0.35s ease, opacity 0.25s ease;
+}
+
+.student-folder-content.expanded {
+  max-height: 4600px;
+  opacity: 1;
+  border-top-color: #e2e8f0;
+}
+
+.student-details-panel {
+  background: #ffffff;
+  padding: 16px 18px 18px 32px;
+}
+
+.student-detail-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.director-detail-section {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 14px;
+  background: #f8fafc;
+}
+
+.director-detail-section h4 {
+  margin: 0 0 10px;
+  color: #1e3a8a;
+  font-size: 16px;
+}
+
+.folder-action-row {
+  justify-content: flex-start;
+}
+
+.director-view-only {
+  margin-top: 8px;
+}
+
+@media (max-width: 768px) {
+  .department-folder-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .department-folder-meta,
+  .student-folder-meta {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .student-folder-card {
+    margin-left: 4px;
+  }
+
+  .student-details-panel {
+    padding: 14px;
+  }
+}

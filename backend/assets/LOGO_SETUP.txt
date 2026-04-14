@@ -1,0 +1,8 @@
+Place university logo image here to show it in payment receipts.
+
+Supported file names:
+- ptu_logo.png
+- ptu_logo.jpg
+
+Receipt generator fallback:
+- If logo file is missing, a colorful PTU emblem is drawn automatically.

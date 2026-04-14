@@ -1,0 +1,56 @@
+{
+  "_id": "APP20260228231655",
+  "scholar_id": "scholar_20260228231643337775",
+  "scholar_email": "akshu@gmail.com",
+  "scholar_name": "Akshu",
+  "registration_id": "PHD20260228231655",
+  "status": "submitted",
+  "personal_details": {
+    "full_name": "Akshu",
+    "date_of_birth": "",
+    "gender": "",
+    "nationality": "",
+    "category": "",
+    "aadhaar_passport": "",
+    "mobile": "9486143990",
+    "email": "akshu@gmail.com",
+    "permanent_address": "",
+    "communication_address": ""
+  },
+  "ug_details": {
+    "degree_name": "",
+    "college_university": "",
+    "branch_department": "",
+    "year_of_passing": "",
+    "cgpa_percentage": ""
+  },
+  "pg_details": null,
+  "entrance_exam": {
+    "exam_name": "",
+    "registration_number": "",
+    "year_of_exam": "",
+    "score_rank": "",
+    "validity_period": ""
+  },
+  "research_info": {
+    "area_of_interest": "",
+    "proposed_topic": "",
+    "statement_of_purpose": "",
+    "preferred_supervisor": "",
+    "previous_research": "",
+    "publications": ""
+  },
+  "work_experience": null,
+  "uploaded_files": {},
+  "created_at": "2026-02-28T17:46:55.269000",
+  "updated_at": "2026-02-28T17:46:55.270000",
+  "reviews": [],
+  "final_decision": null,
+  "id": "APP20260228231655",
+  "exported_at": "2026-03-14T18:45:47.641667",
+  "exported_by": {
+    "id": "director_20260315000753029800",
+    "name": "Ashwin",
+    "role": "director"
+  }
+}

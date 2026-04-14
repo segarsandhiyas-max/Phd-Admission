@@ -1,0 +1,69 @@
+{
+  "registration_id": "PHD20260413002139",
+  "scholar_name": "Kalavathy",
+  "scholar_email": "kumaravelharish844@gmail.com",
+  "exported_at": "2026-04-12T20:19:57.014386",
+  "documents": [
+    {
+      "field": "dob_proof",
+      "file_id": "69dbe94932b85fad829b1ef0",
+      "saved_as": "dob_proof.png"
+    },
+    {
+      "field": "hsc_marksheet",
+      "file_id": "69dbe94f32b85fad829b1ef2",
+      "saved_as": "hsc_marksheet.png"
+    },
+    {
+      "field": "ug_degree_certificate",
+      "file_id": "69dbe95432b85fad829b1ef4",
+      "saved_as": "ug_degree_certificate.png"
+    },
+    {
+      "field": "pg_degree_certificate",
+      "file_id": "69dbe95a32b85fad829b1ef6",
+      "saved_as": "pg_degree_certificate.png"
+    },
+    {
+      "field": "pg_marksheets",
+      "file_id": "69dbe95e32b85fad829b1ef8",
+      "saved_as": "pg_marksheets.png"
+    },
+    {
+      "field": "transfer_certificate",
+      "file_id": "69dbe96532b85fad829b1efa",
+      "saved_as": "transfer_certificate.png"
+    },
+    {
+      "field": "conduct_certificate",
+      "file_id": "69dbe96a32b85fad829b1efc",
+      "saved_as": "conduct_certificate.png"
+    },
+    {
+      "field": "research_proposal",
+      "file_id": "69dbe97232b85fad829b1efe",
+      "saved_as": "research_proposal.pdf"
+    },
+    {
+      "field": "research_publications",
+      "file_id": "69dbe97732b85fad829b1f00",
+      "saved_as": "research_publications.pdf"
+    },
+    {
+      "field": "residence_certificate",
+      "file_id": "69dbe98b32b85fad829b1f02",
+      "saved_as": "residence_certificate.pdf"
+    },
+    {
+      "field": "candidate_photo",
+      "file_id": "69dbf12c32b85fad829b1f08",
+      "saved_as": "candidate_photo.png"
+    },
+    {
+      "field": "signature",
+      "file_id": "69dbf12c32b85fad829b1f0a",
+      "saved_as": "signature.png"
+    }
+  ],
+  "failed_documents": []
+}

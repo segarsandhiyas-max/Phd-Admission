@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Times New Roman', Times, serif;
+  background: linear-gradient(135deg, #1e3c72 0%, #2a5298 50%, #7e8ba3 100%);
+  min-height: 100vh;
+  color: #ffffff;
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+}
+
+input, select, textarea {
+  font-family: inherit;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
