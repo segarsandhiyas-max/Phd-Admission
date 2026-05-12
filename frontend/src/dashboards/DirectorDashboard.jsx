@@ -28,8 +28,9 @@ function DirectorDashboard({ user, onLogout }) {
   const [seatAllocating, setSeatAllocating] = useState(false);
   const [lastAllocation, setLastAllocation] = useState(null);
   const [seatConfig, setSeatConfig] = useState({
-    totalSeats: 10,
+    totalSeats: 11,
     distribution: {
+      visvesvaraya: 1,
       merit: 3,
       general: 2,
       obc: 2,
@@ -139,13 +140,16 @@ function DirectorDashboard({ user, onLogout }) {
         institute,
         total: 0,
         allocated: 0,
+        lapsed: 0,
         notSelected: 0,
         categories: {
+          VISVESVARAYA: 0,
           MERIT: 0,
           GENERAL: 0,
           OBC: 0,
           MBC: 0,
           SC_ST: 0,
+          LAPSE: 0,
         },
       };
     }
@@ -156,7 +160,10 @@ function DirectorDashboard({ user, onLogout }) {
 
     if (status === 'seat allocated') {
       acc[key].allocated += 1;
-      if (acc[key].categories[seatType] !== undefined) {
+      if (seatType.startsWith('LAPSE')) {
+        acc[key].lapsed += 1;
+        acc[key].categories.LAPSE += 1;
+      } else if (acc[key].categories[seatType] !== undefined) {
         acc[key].categories[seatType] += 1;
       }
     } else {
@@ -1033,6 +1040,17 @@ function DirectorDashboard({ user, onLogout }) {
                   />
                 </label>
                 <label>
+                  <span style={rankInputLabelStyle}>Visvesvaraya</span>
+                  <input
+                    type="number"
+                    min="0"
+                    className="search-input"
+                    style={rankInputStyle}
+                    value={seatConfig.distribution.visvesvaraya}
+                    onChange={(event) => updateSeatDistribution('visvesvaraya', event.target.value)}
+                  />
+                </label>
+                <label>
                   <span style={rankInputLabelStyle}>Merit</span>
                   <input
                     type="number"
@@ -1154,42 +1172,41 @@ function DirectorDashboard({ user, onLogout }) {
                         <tr>
                           <th>Department</th>
                           <th>Institute</th>
-                          <th>Total</th>
+                          <th>Total Seats</th>
                           <th>Allocated</th>
+                          <th>Lapsed</th>
                           <th>Not Selected</th>
-                          <th>Remaining Total</th>
+                          <th>Vacancy</th>
+                          <th>VISVESVARAYA</th>
                           <th>MERIT</th>
-                          <th>Rem. MERIT</th>
                           <th>GENERAL</th>
-                          <th>Rem. GENERAL</th>
                           <th>OBC</th>
-                          <th>Rem. OBC</th>
                           <th>MBC</th>
-                          <th>Rem. MBC</th>
                           <th>SC_ST</th>
-                          <th>Rem. SC_ST</th>
+                          <th>LAPSE</th>
                         </tr>
                       </thead>
                       <tbody>
                         {seatSummaryRows.map((row) => {
+                          const vacancy = Math.max(0, Number(seatConfig.totalSeats || 0) - Number(row.allocated || 0));
                           return (
                             <tr key={`summary-${row.department}-${row.institute}`}>
                               <td>{row.department}</td>
                               <td>{row.institute}</td>
-                              <td>{row.total}</td>
-                              <td>{row.allocated}</td>
+                              <td>{seatConfig.totalSeats}</td>
+                              <td style={{ fontWeight: 700, color: '#1662c4' }}>{row.allocated}</td>
+                              <td style={{ fontWeight: 700, color: '#ca8a04' }}>{row.lapsed}</td>
                               <td>{row.notSelected}</td>
-                                <td>{Math.max(0, Number(seatConfig.totalSeats || 0) - Number(row.allocated || 0))}</td>
+                              <td style={{ fontWeight: 800, color: vacancy > 0 ? '#dc2626' : '#15803d' }}>
+                                {vacancy}
+                              </td>
+                              <td>{row.categories.VISVESVARAYA}</td>
                               <td>{row.categories.MERIT}</td>
-                                <td>{Math.max(0, Number(seatConfig.distribution?.merit || 0) - Number(row.categories.MERIT || 0))}</td>
                               <td>{row.categories.GENERAL}</td>
-                                <td>{Math.max(0, Number(seatConfig.distribution?.general || 0) - Number(row.categories.GENERAL || 0))}</td>
                               <td>{row.categories.OBC}</td>
-                                <td>{Math.max(0, Number(seatConfig.distribution?.obc || 0) - Number(row.categories.OBC || 0))}</td>
                               <td>{row.categories.MBC}</td>
-                                <td>{Math.max(0, Number(seatConfig.distribution?.mbc || 0) - Number(row.categories.MBC || 0))}</td>
                               <td>{row.categories.SC_ST}</td>
-                                <td>{Math.max(0, Number(seatConfig.distribution?.sc_st || 0) - Number(row.categories.SC_ST || 0))}</td>
+                              <td>{row.categories.LAPSE}</td>
                             </tr>
                           );
                         })}

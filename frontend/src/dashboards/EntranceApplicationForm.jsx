@@ -17,6 +17,7 @@ function EntranceApplicationForm({ application, onSubmitSuccess, onCancel }) {
     alternateContactNumber: '',
     gender: ((application.personal_details || {}).gender || '').trim(),
     category: ((application.personal_details || {}).category || '').trim(),
+    applyVish: false,
     declaration: false
   });
 
@@ -157,7 +158,8 @@ function EntranceApplicationForm({ application, onSubmitSuccess, onCancel }) {
         category: formData.category.trim(),
         photo_file_id: photoFileId,
         signature_file_id: signatureFileId,
-        declaration: formData.declaration
+        declaration: formData.declaration,
+        apply_vish: formData.applyVish
       };
 
       await api.post('/api/scholar/entrance-application', payload);
@@ -590,6 +592,15 @@ function EntranceApplicationForm({ application, onSubmitSuccess, onCancel }) {
               {signaturePreviewUrl && showSignaturePreview && <div style={previewBoxStyle}><img src={signaturePreviewUrl} alt="Signature preview" className="mt-3 h-20 w-40 rounded-md border border-slate-300 bg-white object-contain" /></div>}
             </div>
           </div>
+        </section>
+
+        <section className="rounded-xl border border-blue-200 bg-blue-50 p-5" style={{ ...sectionStyle, background: '#eff6ff', borderColor: '#bfdbfe' }}>
+          <label className="flex items-start gap-3 text-sm text-slate-800" style={{ color: '#1e3a8a', lineHeight: 1.6 }}>
+            <input type="checkbox" name="applyVish" checked={formData.applyVish} onChange={handleChange} className="mt-1 h-4 w-4" style={{ marginTop: '4px' }} />
+            <span>
+              <strong>Apply for Visvesvaraya Scheme:</strong> I wish to be considered for the Visvesvaraya PhD Scheme (subject to eligibility and seat availability).
+            </span>
+          </label>
         </section>
 
         <section className="rounded-xl border border-amber-200 bg-amber-50 p-5" style={{ ...sectionStyle, background: '#fffbeb', borderColor: '#fcd34d' }}>

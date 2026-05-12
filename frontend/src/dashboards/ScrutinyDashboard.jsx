@@ -9,18 +9,43 @@ import {
 
 const SCRUTINY_ACTIONABLE_STATUSES = ['submitted', 'under_scrutiny'];
 const EXAM_COMPLETED_STATUS = 'Completed';
+const MIN_CGPA_BY_CATEGORY = {
+  sc: 7.5,
+  bc: 7.0,
+  mbc: 7.0,
+  obc: 7.5,
+  general: 7.5,
+};
+const MIN_PERCENTAGE_BY_CATEGORY = {
+  sc: 50,
+  bc: 50,
+  mbc: 50,
+  obc: 50,
+  general: 55,
+};
 
 const getEvaluationStateFromApp = (app) => {
   const attendanceStatus = String(app?.attendanceStatus || '').trim() || 'Present';
-  const entranceMarks = attendanceStatus === 'Present' && app?.entranceMarks !== null && app?.entranceMarks !== undefined
-    ? String(app.entranceMarks)
-    : '';
-
+  // When loading an already-evaluated app, show stored marks in the calculated field
+  // but leave correct/wrong blank so the user re-enters them if they want to change
   return {
     attendanceStatus,
-    entranceMarks,
+    correctAnswers: app?.correctAnswers !== undefined && app?.correctAnswers !== null ? String(app.correctAnswers) : '',
+    wrongAnswers: app?.wrongAnswers !== undefined && app?.wrongAnswers !== null ? String(app.wrongAnswers) : '',
+    entranceMarks: attendanceStatus === 'Present' && app?.entranceMarks !== null && app?.entranceMarks !== undefined
+      ? String(app.entranceMarks)
+      : '',
     remarks: String(app?.entranceEvaluationRemarks || '')
   };
+};
+
+// Formula: correct × 1.5 − wrong × 1  (max 150)
+const calcEntranceScore = (correct, wrong) => {
+  const c = Number(correct);
+  const w = Number(wrong);
+  if (!Number.isFinite(c) || !Number.isFinite(w)) return null;
+  const score = c * 1.5 - w * 1;
+  return Math.min(Math.max(score, 0), 150);
 };
 
 function ScrutinyDashboard({ user, onLogout }) {
@@ -37,7 +62,9 @@ function ScrutinyDashboard({ user, onLogout }) {
 
   const [evaluationData, setEvaluationData] = useState({
     attendanceStatus: 'Present',
-    entranceMarks: '',
+    correctAnswers: '',
+    wrongAnswers: '',
+    entranceMarks: '',   // auto-calculated, read-only display
     remarks: ''
   });
   const [examStatusControl, setExamStatusControl] = useState('Scheduled');
@@ -94,10 +121,17 @@ function ScrutinyDashboard({ user, onLogout }) {
 
   const handleEvaluationChange = (e) => {
     const { name, value } = e.target;
-    setEvaluationData((prev) => ({
-      ...prev,
-      [name]: value
-    }));
+    setEvaluationData((prev) => {
+      const updated = { ...prev, [name]: value };
+      // Recalculate score whenever correct or wrong answers change
+      if (name === 'correctAnswers' || name === 'wrongAnswers') {
+        const correct = name === 'correctAnswers' ? value : prev.correctAnswers;
+        const wrong   = name === 'wrongAnswers'   ? value : prev.wrongAnswers;
+        const score = calcEntranceScore(correct, wrong);
+        updated.entranceMarks = score !== null ? String(score) : '';
+      }
+      return updated;
+    });
   };
 
   const handleSubmitEntranceEvaluation = async (e) => {
@@ -109,9 +143,17 @@ function ScrutinyDashboard({ user, onLogout }) {
       return;
     }
 
-    if (evaluationData.attendanceStatus === 'Present' && String(evaluationData.entranceMarks).trim() === '') {
-      alert('Please enter entrance marks for present candidates.');
-      return;
+    if (evaluationData.attendanceStatus === 'Present') {
+      const correct = String(evaluationData.correctAnswers).trim();
+      const wrong   = String(evaluationData.wrongAnswers).trim();
+      if (correct === '' || wrong === '') {
+        alert('Please enter both the number of correct and wrong answers.');
+        return;
+      }
+      if (String(evaluationData.entranceMarks).trim() === '') {
+        alert('Could not calculate entrance marks. Please check your inputs.');
+        return;
+      }
     }
 
     setLoading(true);
@@ -124,6 +166,8 @@ function ScrutinyDashboard({ user, onLogout }) {
 
       if (evaluationData.attendanceStatus === 'Present') {
         payload.entrance_marks = Number(evaluationData.entranceMarks);
+        payload.correctAnswers = Number(evaluationData.correctAnswers);
+        payload.wrongAnswers = Number(evaluationData.wrongAnswers);
       }
 
       const response = await api.post('/api/scrutiny/entrance-evaluation', payload);
@@ -133,6 +177,8 @@ function ScrutinyDashboard({ user, onLogout }) {
         ...prev,
         attendanceStatus: response.data?.attendanceStatus,
         entranceMarks: response.data?.entranceMarks,
+        correctAnswers: response.data?.correctAnswers,
+        wrongAnswers: response.data?.wrongAnswers,
         qualified: response.data?.qualified,
         candidateStatus: response.data?.candidateStatus,
         entranceRank: response.data?.entranceRank,
@@ -141,6 +187,8 @@ function ScrutinyDashboard({ user, onLogout }) {
 
       setEvaluationData((prev) => ({
         attendanceStatus: response.data?.attendanceStatus || prev.attendanceStatus || 'Present',
+        correctAnswers: '',
+        wrongAnswers: '',
         entranceMarks: response.data?.attendanceStatus === 'Present'
           ? String(response.data?.entranceMarks ?? prev.entranceMarks ?? '')
           : '',
@@ -280,7 +328,7 @@ function ScrutinyDashboard({ user, onLogout }) {
   };
 
   const parsePgMarks = (app) => {
-    const raw = app?.pgPercentage;
+    const raw = app?.pgPercentage ?? app?.pgMarks ?? app?.pg_details?.cgpa_percentage;
     if (raw === null || raw === undefined || String(raw).trim() === '') return null;
     const match = String(raw).match(/\d+(\.\d+)?/);
     if (!match) return null;
@@ -291,27 +339,37 @@ function ScrutinyDashboard({ user, onLogout }) {
   const getEligibilityStatus = (app) => {
     const pgMarks = parsePgMarks(app);
     const category = String(app?.personal_details?.category || '').trim().toLowerCase();
-    const reservedCategories = new Set(['sc', 'st', 'obc', 'ebc', 'pwd', 'women']);
-    const requiredMarks = reservedCategories.has(category) ? 50 : 55;
+    const requiredCgpa = MIN_CGPA_BY_CATEGORY[category] ?? MIN_CGPA_BY_CATEGORY.general;
+    const requiredPercentage = MIN_PERCENTAGE_BY_CATEGORY[category] ?? MIN_PERCENTAGE_BY_CATEGORY.general;
 
     if (pgMarks === null) {
       return {
         pgMarks: null,
+        percentageEquivalent: null,
         category,
-        requiredMarks,
-        status: 'PG Marks Missing',
+        requiredCgpa,
+        requiredPercentage,
+        evaluatedUsing: 'Missing',
+        status: 'Not Eligible',
         statusType: 'missing',
         isEligible: false
       };
     }
 
-    const isEligible = pgMarks >= requiredMarks;
+    const evaluatedUsing = pgMarks <= 10 ? 'CGPA' : 'Percentage';
+    const percentageEquivalent = evaluatedUsing === 'CGPA' ? Number((pgMarks * 9.5).toFixed(2)) : pgMarks;
+    const isEligible = evaluatedUsing === 'CGPA'
+      ? pgMarks >= requiredCgpa
+      : pgMarks >= requiredPercentage;
     const status = isEligible ? 'Eligible' : 'Not Eligible';
 
     return {
       pgMarks,
+      percentageEquivalent,
       category,
-      requiredMarks,
+      requiredCgpa,
+      requiredPercentage,
+      evaluatedUsing,
       status,
       statusType: isEligible ? 'eligible' : 'ineligible',
       isEligible
@@ -324,6 +382,40 @@ function ScrutinyDashboard({ user, onLogout }) {
     .filter((app) => app.qualified === true)
     .sort((a, b) => Number(b.entranceMarks || 0) - Number(a.entranceMarks || 0));
   const deptCandidates = applications;
+
+  // ── Entrance Scores threshold logic ────────────────────────────────────────
+  // Only consider present candidates who have a numeric entranceMarks
+  const scoredApps = applications.filter(
+    (app) => String(app.attendanceStatus || '').trim() === 'Present'
+      && app.entranceMarks !== null && app.entranceMarks !== undefined
+      && String(app.entranceMarks).trim() !== ''
+      && Number.isFinite(Number(app.entranceMarks))
+  );
+  const allScores = scoredApps.map((app) => Number(app.entranceMarks));
+  const scoreMax  = allScores.length ? Math.max(...allScores) : null;
+  const scoreMin  = allScores.length ? Math.min(...allScores) : null;
+  const scoreThreshold = (scoreMax !== null && scoreMin !== null) ? parseFloat((scoreMax - scoreMin).toFixed(4)) : null;
+  // Include all applications in the scores table (absent shown as N/A, no marks shown as N/A)
+  const scoresTableApps = applications
+    .slice()
+    .sort((a, b) => Number(b.entranceMarks || 0) - Number(a.entranceMarks || 0));
+  // Determine eligibility per candidate
+  const getScoreEligibility = (app) => {
+    const attendance = String(app.attendanceStatus || '').trim();
+    if (attendance === 'Absent') return 'absent';
+    const marks = Number(app.entranceMarks);
+    if (!Number.isFinite(marks) || app.entranceMarks === null || app.entranceMarks === undefined || String(app.entranceMarks).trim() === '') return 'not-evaluated';
+    if (scoreThreshold === null) return 'not-evaluated';
+    return marks >= scoreThreshold ? 'eligible' : 'excluded';
+  };
+  const scoreEligibleCount  = scoresTableApps.filter((a) => getScoreEligibility(a) === 'eligible').length;
+  const scoreExcludedCount  = scoresTableApps.filter((a) => getScoreEligibility(a) === 'excluded').length;
+  // Assign rank only to eligible candidates (descending marks)
+  const scoreRankedIds = scoresTableApps
+    .filter((a) => getScoreEligibility(a) === 'eligible')
+    .sort((a, b) => Number(b.entranceMarks) - Number(a.entranceMarks))
+    .map((a, i) => ({ id: a.id, rank: i + 1 }));
+  const scoreRankMap = Object.fromEntries(scoreRankedIds.map(({ id, rank }) => [id, rank]));
   const getCandidateStateTypeLabel = (candidate) => {
     const rawStateType = String(
       candidate?.stateType
@@ -332,7 +424,12 @@ function ScrutinyDashboard({ user, onLogout }) {
       || ''
     ).trim().toLowerCase();
 
-    return rawStateType === 'puducherry ut' ? 'Puducherry UT' : 'Other State';
+    // Flexible check: handle "Puducherry (UT)", "Puducherry UT", etc.
+    const normalized = rawStateType.replace(/[()]/g, '').replace(/\s+/g, ' ');
+    if (normalized.includes('puducherry ut') || normalized.includes('puducherry')) {
+      return 'Puducherry UT';
+    }
+    return 'Other State';
   };
   const puducherryCandidates = deptCandidates.filter((candidate) => getCandidateStateTypeLabel(candidate) === 'Puducherry UT');
   const otherStateCandidates = deptCandidates.filter((candidate) => getCandidateStateTypeLabel(candidate) === 'Other State');
@@ -348,9 +445,13 @@ function ScrutinyDashboard({ user, onLogout }) {
   const normalizedSelectedMarks = selectedEvaluationState && selectedEvaluationState.attendanceStatus === 'Present'
     ? String(selectedEvaluationState.entranceMarks ?? '').trim()
     : '';
+  // Changed if attendance changed, or computed marks differ from saved, or remarks changed
+  // Also consider "correct" or "wrong" being filled as a change intent
   const hasEvaluationChanges = Boolean(selectedEvaluationState) && (
     normalizedCurrentAttendance !== selectedEvaluationState.attendanceStatus
     || normalizedCurrentMarks !== normalizedSelectedMarks
+    || String(evaluationData.correctAnswers ?? '').trim() !== ''
+    || String(evaluationData.wrongAnswers ?? '').trim() !== ''
     || String(evaluationData.remarks ?? '').trim() !== String(selectedEvaluationState.remarks ?? '').trim()
   );
   const canSaveEntranceEvaluation = canEvaluateEntrance
@@ -359,6 +460,12 @@ function ScrutinyDashboard({ user, onLogout }) {
     && (normalizedCurrentAttendance === 'Absent' || normalizedCurrentMarks !== '');
   const eligibilityInfo = selectedApp ? getEligibilityStatus(selectedApp) : null;
   const categoryLabel = (eligibilityInfo?.category || 'general').toUpperCase();
+  const evaluatedUsingLabel = String(
+    selectedApp?.scrutiny?.eligibility_rule
+    || selectedApp?.eligibility_rule
+    || eligibilityInfo?.evaluatedUsing
+    || 'Missing'
+  );
   const scrutinySummaryItems = selectedApp ? [
     { label: 'Department', value: selectedApp.department || 'N/A' },
     { label: 'Payment', value: selectedApp.paymentStatus || 'Pending' },
@@ -454,6 +561,12 @@ function ScrutinyDashboard({ user, onLogout }) {
           >
             Qualified Candidates
           </button>
+          <button
+            className={`tab ${filter === 'scores' ? 'active' : ''}`}
+            onClick={() => setFilter('scores')}
+          >
+            📊 Entrance Scores
+          </button>
         </div>
 
         {/* Applications Grid */}
@@ -544,6 +657,193 @@ function ScrutinyDashboard({ user, onLogout }) {
         </div>
         )}
 
+        {/* ── Entrance Examination Scores Panel ─────────────────────────── */}
+        {filter === 'scores' && (
+          <div className="detail-section" style={{ marginTop: '8px' }}>
+            {/* Panel header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '8px', marginBottom: '4px' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700 }}>📊 Entrance Examination Scores</h3>
+                <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#64748b' }}>
+                  Consolidated list · threshold auto-computed as <strong>Max − Min</strong>
+                  {scoreMax !== null && ` · Last synced: ${new Date().toLocaleTimeString()}`}
+                </p>
+              </div>
+              <button
+                className="btn-secondary"
+                style={{ fontSize: '12px', padding: '6px 14px' }}
+                onClick={fetchApplications}
+                disabled={loading}
+              >
+                🔄 Refresh
+              </button>
+            </div>
+
+            {/* ── Stat cards ── */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px', margin: '16px 0' }}>
+              {/* Highest Mark */}
+              <div style={{ background: 'linear-gradient(135deg,#dcfce7,#bbf7d0)', border: '1px solid #86efac', borderRadius: '10px', padding: '14px 16px', textAlign: 'center' }}>
+                <p style={{ fontSize: '11px', fontWeight: 600, color: '#166534', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Highest Mark</p>
+                <p style={{ fontSize: '32px', fontWeight: 800, color: '#14532d', margin: '0 0 2px', lineHeight: 1 }}>
+                  {scoreMax !== null ? scoreMax : '—'}
+                </p>
+                <p style={{ fontSize: '11px', color: '#4ade80', margin: 0 }}>out of 150</p>
+              </div>
+              {/* Lowest Mark */}
+              <div style={{ background: 'linear-gradient(135deg,#fee2e2,#fecaca)', border: '1px solid #f87171', borderRadius: '10px', padding: '14px 16px', textAlign: 'center' }}>
+                <p style={{ fontSize: '11px', fontWeight: 600, color: '#991b1b', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Lowest Mark</p>
+                <p style={{ fontSize: '32px', fontWeight: 800, color: '#7f1d1d', margin: '0 0 2px', lineHeight: 1 }}>
+                  {scoreMin !== null ? scoreMin : '—'}
+                </p>
+                <p style={{ fontSize: '11px', color: '#f87171', margin: 0 }}>out of 150</p>
+              </div>
+              {/* Threshold */}
+              <div style={{ background: 'linear-gradient(135deg,#eff6ff,#bfdbfe)', border: '1px solid #60a5fa', borderRadius: '10px', padding: '14px 16px', textAlign: 'center' }}>
+                <p style={{ fontSize: '11px', fontWeight: 600, color: '#1e40af', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Threshold</p>
+                <p style={{ fontSize: '32px', fontWeight: 800, color: '#1e3a8a', margin: '0 0 2px', lineHeight: 1 }}>
+                  {scoreThreshold !== null ? scoreThreshold : '—'}
+                </p>
+                <p style={{ fontSize: '11px', color: '#3b82f6', margin: 0 }}>{scoreMax !== null ? `${scoreMax} − ${scoreMin}` : 'N/A'}</p>
+              </div>
+              {/* Eligible */}
+              <div style={{ background: 'linear-gradient(135deg,#f0fdf4,#dcfce7)', border: '1px solid #4ade80', borderRadius: '10px', padding: '14px 16px', textAlign: 'center' }}>
+                <p style={{ fontSize: '11px', fontWeight: 600, color: '#166534', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Eligible</p>
+                <p style={{ fontSize: '32px', fontWeight: 800, color: '#15803d', margin: '0 0 2px', lineHeight: 1 }}>
+                  {scoreEligibleCount}
+                </p>
+                <p style={{ fontSize: '11px', color: '#4ade80', margin: 0 }}>marks ≥ threshold</p>
+              </div>
+              {/* Excluded */}
+              <div style={{ background: 'linear-gradient(135deg,#fff7ed,#fed7aa)', border: '1px solid #fb923c', borderRadius: '10px', padding: '14px 16px', textAlign: 'center' }}>
+                <p style={{ fontSize: '11px', fontWeight: 600, color: '#9a3412', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Excluded</p>
+                <p style={{ fontSize: '32px', fontWeight: 800, color: '#7c2d12', margin: '0 0 2px', lineHeight: 1 }}>
+                  {scoreExcludedCount}
+                </p>
+                <p style={{ fontSize: '11px', color: '#fb923c', margin: 0 }}>marks &lt; threshold</p>
+              </div>
+            </div>
+
+            {/* ── Eligibility rule banner ── */}
+            {scoreThreshold !== null && (
+              <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '10px 16px', marginBottom: '16px', fontSize: '13px', color: '#92400e' }}>
+                🔔 <strong>Eligibility Rule:</strong> Threshold = Max ({scoreMax}) − Min ({scoreMin}) = {scoreThreshold}.
+                &nbsp;Candidates scoring ≥ {scoreThreshold} are <strong style={{ color: '#15803d' }}>Eligible</strong>;
+                those scoring below are <strong style={{ color: '#b91c1c' }}>Excluded</strong>.
+                &nbsp;· Eligible: <strong>{scoreEligibleCount}</strong> / {allScores.length} evaluated.
+              </div>
+            )}
+
+            {/* ── Scores table ── */}
+            {scoresTableApps.length === 0 ? (
+              <p style={{ color: '#94a3b8', textAlign: 'center', padding: '24px 0' }}>No candidates to display. Evaluate entrance scores first.</p>
+            ) : (
+              <div className="qualified-table-container" style={{ overflowX: 'auto' }}>
+                <table className="qualified-results-table" style={{ fontSize: '13px', minWidth: '860px' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ width: '36px' }}>#</th>
+                      <th>Student Name</th>
+                      <th>Reg. ID</th>
+                      <th>Department</th>
+                      <th>Category</th>
+                      <th>Attendance</th>
+                      <th style={{ color: '#15803d' }}>✔ Correct</th>
+                      <th style={{ color: '#b91c1c' }}>✖ Wrong</th>
+                      <th>Total Marks</th>
+                      <th>Eligibility</th>
+                      <th>Rank</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scoresTableApps.map((app, idx) => {
+                      const eligStatus   = getScoreEligibility(app);
+                      const rank         = scoreRankMap[app.id] ?? null;
+                      const marks        = Number(app.entranceMarks);
+                      const hasMarks     = Number.isFinite(marks) && String(app.entranceMarks ?? '').trim() !== '';
+                      const isPresent    = String(app.attendanceStatus || '').trim() === 'Present';
+                      const isAbsent     = String(app.attendanceStatus || '').trim() === 'Absent';
+                      const badgeStyle   = {
+                        eligible:      { background: '#dcfce7', color: '#166534', border: '1px solid #86efac' },
+                        excluded:      { background: '#fee2e2', color: '#991b1b', border: '1px solid #fca5a5' },
+                        absent:        { background: '#f1f5f9', color: '#64748b', border: '1px solid #cbd5e1' },
+                        'not-evaluated': { background: '#fefce8', color: '#713f12', border: '1px solid #fde68a' },
+                      }[eligStatus] || {};
+                      const badgeLabel   = {
+                        eligible: '✓ Eligible',
+                        excluded: '✗ Excluded',
+                        absent:   '— Absent',
+                        'not-evaluated': '⏳ Not Evaluated',
+                      }[eligStatus] || eligStatus;
+                      return (
+                        <tr key={`score-${app.id}`}
+                          style={{
+                            background: eligStatus === 'eligible' ? 'rgba(220,252,231,0.25)'
+                              : eligStatus === 'excluded' ? 'rgba(254,226,226,0.2)' : 'transparent'
+                          }}
+                        >
+                          <td style={{ textAlign: 'center', color: '#94a3b8', fontWeight: 600 }}>{idx + 1}</td>
+                          <td style={{ fontWeight: 600 }}>{app.personal_details?.full_name || app.scholar_name || 'N/A'}</td>
+                          <td style={{ fontFamily: 'monospace', fontSize: '11px', color: '#475569' }}>{app.registration_id || 'N/A'}</td>
+                          <td>{app.department || 'N/A'}</td>
+                          <td style={{ textTransform: 'uppercase', fontSize: '11px', fontWeight: 600 }}>
+                            {String(app.personal_details?.category || '').toUpperCase() || 'N/A'}
+                          </td>
+                          <td>
+                            {isPresent ? (
+                              <span style={{ background: '#dcfce7', color: '#166534', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 600 }}>Present</span>
+                            ) : isAbsent ? (
+                              <span style={{ background: '#f1f5f9', color: '#64748b', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 600 }}>Absent</span>
+                            ) : (
+                              <span style={{ color: '#94a3b8', fontSize: '11px' }}>—</span>
+                            )}
+                          </td>
+                          {/* Correct answers (stored on app if available, else show dash) */}
+                          <td style={{ textAlign: 'center', color: '#15803d', fontWeight: 700 }}>
+                            {app.correctAnswers !== undefined && app.correctAnswers !== null && String(app.correctAnswers).trim() !== ''
+                              ? app.correctAnswers : (hasMarks && isPresent ? '—' : '—')}
+                          </td>
+                          {/* Wrong answers */}
+                          <td style={{ textAlign: 'center', color: '#b91c1c', fontWeight: 700 }}>
+                            {app.wrongAnswers !== undefined && app.wrongAnswers !== null && String(app.wrongAnswers).trim() !== ''
+                              ? app.wrongAnswers : (hasMarks && isPresent ? '—' : '—')}
+                          </td>
+                          {/* Total marks */}
+                          <td style={{ textAlign: 'center', fontWeight: 700 }}>
+                            {hasMarks && isPresent ? (
+                              <span style={{ fontWeight: 800, fontSize: '15px' }}>
+                                {Number.isInteger(marks) ? marks : marks.toFixed(2)}
+                                <span style={{ fontWeight: 400, color: '#94a3b8', fontSize: '10px' }}> /150</span>
+                              </span>
+                            ) : '—'}
+                          </td>
+                          {/* Eligibility badge */}
+                          <td style={{ textAlign: 'center' }}>
+                            <span style={{ ...badgeStyle, padding: '3px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                              {badgeLabel}
+                            </span>
+                          </td>
+                          {/* Rank */}
+                          <td style={{ textAlign: 'center' }}>
+                            {rank !== null
+                              ? <span className="rank-pill" style={{ fontWeight: 800 }}>#{rank}</span>
+                              : <span style={{ color: '#94a3b8' }}>—</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '12px', textAlign: 'right' }}>
+              Eligible: <strong style={{ color: '#15803d' }}>{scoreEligibleCount}</strong> &nbsp;·&nbsp;
+              Excluded: <strong style={{ color: '#b91c1c' }}>{scoreExcludedCount}</strong> &nbsp;·&nbsp;
+              Total evaluated: <strong>{allScores.length}</strong>
+            </p>
+          </div>
+        )}
+
         {/* Application Detail View */}
         {selectedApp && (
           <div className="modal-overlay" onClick={() => setSelectedApp(null)}>
@@ -594,6 +894,66 @@ function ScrutinyDashboard({ user, onLogout }) {
                     )}
                   </div>
 
+                  <div className="applicant-details scrutiny-section-card" style={{ marginTop: '16px', background: '#f8fafc', borderLeft: '4px solid #3b82f6' }}>
+                    <h3>Visvesvaraya Scheme Eligibility</h3>
+                    {(() => {
+                      const visConfig = {
+                        "Computer Science": 1,
+                        "Information Technology": 0,
+                        "Electronics and Communication Engineering": 0,
+                        "Electrical and Instrumentation Engineering": 0,
+                        "Mechanical Engineering": 0,
+                        "Mechatronics": 0,
+                        "Civil Engineering": 0,
+                        "Chemical Engineering": 0
+                      };
+                      const deptKey = String(selectedApp.department || '').trim();
+                      const isDeptEligible = visConfig[deptKey] > 0;
+                      const hasApplied = Boolean(selectedApp.apply_vish);
+                      const isStatusAccepted = String(selectedApp.status || '').trim().toLowerCase() === "admission_confirmed";
+                      const isNewPhd = selectedApp.is_new_phd !== false;
+                      const hasNoOtherFellowship = !selectedApp.has_other_fellowship;
+
+                      const isVishEligible = isDeptEligible && hasApplied && isStatusAccepted && isNewPhd && hasNoOtherFellowship;
+
+                      return (
+                        <>
+                          <p><strong>Visvesvaraya Applied:</strong> {hasApplied ? 'YES' : 'NO'}</p>
+                          <div style={{ margin: '12px 0', padding: '12px', background: '#fff', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                            <p style={{ marginBottom: '8px', fontWeight: 600 }}>Eligibility Conditions:</p>
+                            <p style={{ color: isDeptEligible ? '#15803d' : '#b91c1c', margin: '4px 0' }}>
+                              {isDeptEligible ? '✔' : '✖'} Department matches configured department
+                            </p>
+                            <p style={{ color: isStatusAccepted ? '#15803d' : '#b91c1c', margin: '4px 0' }}>
+                              {isStatusAccepted ? '✔' : '✖'} Status = admission_confirmed
+                            </p>
+                            <p style={{ color: isNewPhd ? '#15803d' : '#b91c1c', margin: '4px 0' }}>
+                              {isNewPhd ? '✔' : '✖'} New PhD = Yes
+                            </p>
+                            <p style={{ color: hasNoOtherFellowship ? '#15803d' : '#b91c1c', margin: '4px 0' }}>
+                              {hasNoOtherFellowship ? '✔' : '✖'} No Other Fellowship
+                            </p>
+                          </div>
+                          <p>
+                            <strong>Final Status: </strong> 
+                            <span style={{ 
+                              padding: '4px 8px', 
+                              borderRadius: '4px', 
+                              fontWeight: 600,
+                              background: isVishEligible ? '#dcfce7' : '#fee2e2',
+                              color: isVishEligible ? '#166534' : '#991b1b'
+                            }}>
+                              {isVishEligible ? 'Eligible' : 'Not Eligible'}
+                            </span>
+                          </p>
+                          <p style={{ fontSize: '12px', color: '#64748b', marginTop: '8px', fontStyle: 'italic' }}>
+                            (This is DISPLAY ONLY, do not affect approval flow)
+                          </p>
+                        </>
+                      );
+                    })()}
+                  </div>
+
                   {selectedDocuments.length > 0 && (
                     <div className="documents-section scrutiny-docs-card">
                       <h3>Uploaded Documents</h3>
@@ -642,16 +1002,20 @@ function ScrutinyDashboard({ user, onLogout }) {
                         <p>
                           <strong>Applicant Category:</strong> {categoryLabel}
                         </p>
-                        <p><strong>PG Marks:</strong> {eligibilityInfo.pgMarks === null ? 'Not Provided' : `${eligibilityInfo.pgMarks}%`}</p>
+                        <p><strong>PG Value:</strong> {eligibilityInfo.pgMarks === null ? 'Not Provided' : `${eligibilityInfo.pgMarks}`}</p>
+                        <p><strong>Evaluated using:</strong> {evaluatedUsingLabel === 'Missing' ? 'CGPA/Percentage not provided' : evaluatedUsingLabel}</p>
+                        {eligibilityInfo.percentageEquivalent !== null && (
+                          <p><strong>Percentage Equivalent:</strong> {eligibilityInfo.percentageEquivalent}</p>
+                        )}
                         <p>
                           <strong>Eligibility Status:</strong>
                           <span className={`eligibility-badge status-${eligibilityInfo.statusType}`}>{eligibilityInfo.status}</span>
                         </p>
                         <p>
-                          <strong>Category Threshold Applied:</strong> {categoryLabel} requires minimum {eligibilityInfo.requiredMarks}%
+                          <strong>Category Threshold Applied:</strong> {categoryLabel} requires minimum CGPA {eligibilityInfo.requiredCgpa} or minimum Percentage {eligibilityInfo.requiredPercentage}
                         </p>
-                        <p><strong>Reference Rule:</strong> General → 55% | Reserved (SC/ST/OBC/EBC/PwD/Women) → 50%</p>
-                        <p><strong>Final Decision Rule:</strong> documentsVerified = true and eligibilityStatus = Eligible → Approved, otherwise Rejected (including missing PG marks).</p>
+                        <p><strong>Reference Rule:</strong> SC/OBC/General CGPA: 7.5 | BC/MBC CGPA: 7.0 | SC/BC/MBC/OBC Percentage: 50 | General Percentage: 55</p>
+                        <p><strong>Final Decision Rule:</strong> documentsVerified = true and eligibilityStatus = Eligible → Approved, otherwise Rejected.</p>
                       </div>
                     )}
 
@@ -679,10 +1043,10 @@ function ScrutinyDashboard({ user, onLogout }) {
                         />
                         <span>
                           {eligibilityInfo?.statusType === 'eligible'
-                            ? `I confirm PG marks meet the applied threshold for ${categoryLabel} (${eligibilityInfo?.requiredMarks ?? 55}% minimum).`
+                            ? `I confirm PG ${evaluatedUsingLabel} meets the applied threshold for ${categoryLabel}.`
                             : eligibilityInfo?.statusType === 'missing'
-                              ? `I confirm PG marks are missing/unavailable for this application and treated as Not Eligible for scrutiny.`
-                              : `I confirm PG marks were verified and do not meet the applied threshold for ${categoryLabel} (${eligibilityInfo?.requiredMarks ?? 55}% minimum).`
+                              ? `I confirm PG CGPA/Percentage is missing for this application and treated as Not Eligible for scrutiny.`
+                              : `I confirm PG ${evaluatedUsingLabel} was verified and does not meet the applied threshold for ${categoryLabel}.`
                           }
                         </span>
                       </label>
@@ -761,22 +1125,88 @@ function ScrutinyDashboard({ user, onLogout }) {
                       </select>
                     </div>
 
-                    {evaluationData.attendanceStatus === 'Present' && (
-                      <div className="form-group scrutiny-remarks-group">
-                        <label>Entrance Marks (Out of 150)</label>
-                        <input
-                          type="number"
-                          name="entranceMarks"
-                          min="0"
-                          max="150"
-                          step="0.01"
-                          value={evaluationData.entranceMarks}
-                          onChange={handleEvaluationChange}
-                          disabled={!canEvaluateEntrance || loading}
-                          placeholder="Enter marks out of 150"
-                        />
-                      </div>
-                    )}
+                    {evaluationData.attendanceStatus === 'Present' && (() => {
+                      const totalScore = evaluationData.entranceMarks !== '' ? Number(evaluationData.entranceMarks) : null;
+                      const correct = String(evaluationData.correctAnswers).trim();
+                      const wrong   = String(evaluationData.wrongAnswers).trim();
+                      return (
+                        <>
+                          {/* Marking scheme hint */}
+                          <div style={{
+                            background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px',
+                            padding: '10px 14px', marginBottom: '12px', fontSize: '13px', color: '#1e40af'
+                          }}>
+                            📋 <strong>Marking Scheme:</strong> Total Marks = (Correct Answers × +1.5) − (Wrong Answers × 1)
+                          </div>
+
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                            {/* Correct Answers */}
+                            <div className="form-group scrutiny-remarks-group" style={{ margin: 0 }}>
+                              <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ color: '#15803d', fontWeight: 700 }}>✔ Correct Answers</span>
+                                <span style={{ fontWeight: 400, color: '#64748b', fontSize: '12px' }}>(max 100)</span>
+                              </label>
+                              <input
+                                type="number"
+                                name="correctAnswers"
+                                min="0"
+                                max="100"
+                                step="1"
+                                value={evaluationData.correctAnswers}
+                                onChange={handleEvaluationChange}
+                                disabled={!canEvaluateEntrance || loading}
+                                placeholder="e.g. 80"
+                              />
+                            </div>
+
+                            {/* Wrong Answers */}
+                            <div className="form-group scrutiny-remarks-group" style={{ margin: 0 }}>
+                              <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ color: '#b91c1c', fontWeight: 700 }}>✖ Wrong Answers</span>
+                                <span style={{ fontWeight: 400, color: '#64748b', fontSize: '12px' }}>(max 100)</span>
+                              </label>
+                              <input
+                                type="number"
+                                name="wrongAnswers"
+                                min="0"
+                                max="100"
+                                step="1"
+                                value={evaluationData.wrongAnswers}
+                                onChange={handleEvaluationChange}
+                                disabled={!canEvaluateEntrance || loading}
+                                placeholder="e.g. 5"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Auto-calculated result */}
+                          <div style={{
+                            border: `2px solid ${totalScore !== null ? '#10b981' : '#e2e8f0'}`,
+                            borderRadius: '10px', padding: '14px 18px',
+                            background: totalScore !== null ? '#f0fdf4' : '#f8fafc',
+                            marginBottom: '4px', transition: 'all 0.25s ease'
+                          }}>
+                            <p style={{ fontSize: '12px', color: '#64748b', margin: '0 0 4px', fontWeight: 500, letterSpacing: '0.03em' }}>
+                              Auto-Calculated Total Marks
+                            </p>
+                            {totalScore !== null ? (
+                              <>
+                                <p style={{ fontSize: '22px', fontWeight: 800, color: '#065f46', margin: '0 0 4px' }}>
+                                  🧮 {totalScore.toFixed(totalScore % 1 === 0 ? 0 : 2)} / 150
+                                </p>
+                                <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>
+                                  {correct} correct × (+1.5) − {wrong} wrong × (1) = {totalScore.toFixed(totalScore % 1 === 0 ? 0 : 2)}
+                                </p>
+                              </>
+                            ) : (
+                              <p style={{ color: '#94a3b8', fontSize: '14px', margin: 0 }}>
+                                Enter correct and wrong answers above to calculate score
+                              </p>
+                            )}
+                          </div>
+                        </>
+                      );
+                    })()}
 
                     <div className="form-group scrutiny-remarks-group">
                       <label>Evaluation Remarks (Optional)</label>

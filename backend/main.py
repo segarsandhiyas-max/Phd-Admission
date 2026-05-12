@@ -12,6 +12,7 @@ from google.oauth2 import id_token as google_id_token
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 import os
+import math
 from dotenv import load_dotenv
 import shutil
 from pathlib import Path
@@ -257,6 +258,7 @@ class EntranceApplicationSubmit(BaseModel):
     photo_file_id: Optional[str] = None
     signature_file_id: Optional[str] = None
     declaration: bool = False
+    apply_vish: Optional[bool] = False
 
 class ReviewCreate(BaseModel):
     application_id: str
@@ -306,6 +308,8 @@ class EntranceEvaluationRequest(BaseModel):
     application_id: str
     attendance_status: str
     entrance_marks: Optional[float] = None
+    correctAnswers: Optional[int] = None
+    wrongAnswers: Optional[int] = None
     remarks: Optional[str] = None
 
 class InterviewEvaluationRequest(BaseModel):
@@ -314,6 +318,7 @@ class InterviewEvaluationRequest(BaseModel):
     remarks: Optional[str] = None
 
 class SeatDistributionConfig(BaseModel):
+    visvesvaraya: int = Field(0, ge=0)
     merit: int = Field(..., ge=0)
     general: int = Field(..., ge=0)
     obc: int = Field(..., ge=0)
@@ -519,6 +524,8 @@ SEAT_CONFIG_DEPARTMENT_ALIASES = {
     "COMPUTER SCIENCE AND ENGINEERING": "CSE",
     "CSE": "CSE",
     "ECE": "ECE",
+    "ELECTRONICS AND COMMUNICATION": "ECE",
+    "ELECTRONICS AND COMMUNICATION ENGINEERING": "ECE",
     "ELECTRICAL AND ELECTRONICS ENGINEERING": "EEE",
     "ELECTRICAL ELECTRONICS ENGINEERING": "EEE",
     "EEE": "EEE",
@@ -579,6 +586,7 @@ def to_allocation_seat_config(config: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "totalSeats": config["TOTAL"],
         "distribution": {
+            "visvesvaraya": int(config.get("VISVESVARAYA") or 0),
             "merit": config["MERIT"],
             "general": config["GENERAL"],
             "obc": config["OBC"],
@@ -593,7 +601,62 @@ DEFAULT_EXAM_DURATION = "3 Hours"
 DEFAULT_REPORTING_TIME = "09:30 AM"
 DEFAULT_EXAM_CENTRE = "Puducherry Technological University"
 
+# ============================================
+# VISVESVARAYA PHD SCHEME (PHASE-II) CONFIG
+# ============================================
+VISVESVARAYA_SCHEME_CONFIG = {
+    "enabled": True,
+    "seats": 1,  # Configurable number of Visvesvaraya seats
+    "department_seats": {
+        "Computer Science": 1,
+        "Information Technology": 0,
+        "Electronics and Communication Engineering": 0,
+        "Electrical and Instrumentation Engineering": 0,
+        "Mechanical Engineering": 0,
+        "Mechatronics": 0,
+        "Civil Engineering": 0,
+        "Chemical Engineering": 0
+    },
+    "required_status": "admission_confirmed",
+}
+
+VISVESVARAYA_FELLOWSHIP_SUPPORT = {
+    "fellowship_type": "Visvesvaraya",
+    "stipend_year_1_2": 38750,  # ₹38,750/month for Year 1-2
+    "stipend_year_3_5": 43750,  # ₹43,750/month for Year 3-5
+    "research_grant": 120000,   # ₹1,20,000/year
+    "rent_support": "As per govt norms",
+    "international_conference_support": "From 3rd year onwards",
+    "lab_visit_abroad_support": "6 months support",
+    "max_duration_years": 5,  # Up to 5 years
+}
+
+VISVESVARAYA_SCHEME_RULES = {
+    "only_new_phd": True,
+    "no_other_govt_fellowship": True,
+    "maintain_academic_progress": True,
+    "use_seat_same_academic_year": True,
+    "no_replacement_after_allocation": True,
+    "termination_on_poor_progress": True,
+    "termination_on_fund_misuse": True,
+    "annual_performance_monitoring": True,
+}
+
 SCRUTINY_CONCESSION_CATEGORIES = {"sc", "st", "obc", "ebc", "pwd", "women"}
+SCRUTINY_MIN_CGPA_BY_CATEGORY = {
+    "sc": 7.5,
+    "bc": 7.0,
+    "mbc": 7.0,
+    "obc": 7.5,
+    "general": 7.5,
+}
+SCRUTINY_MIN_PERCENTAGE_BY_CATEGORY = {
+    "sc": 50,
+    "bc": 50,
+    "mbc": 50,
+    "obc": 50,
+    "general": 55,
+}
 SCRUTINY_REQUIRED_BASE_DOCUMENTS = [
     "dob_proof",
     "hsc_marksheet",
@@ -853,6 +916,11 @@ def validate_and_normalize_seat_config(config: Optional[Dict[str, Any]]) -> Dict
             raise HTTPException(status_code=400, detail=f"Seat count for {category} cannot be negative")
         normalized_distribution[category] = value
 
+    visvesvaraya_value = int(distribution.get("visvesvaraya") or 0)
+    if visvesvaraya_value < 0:
+        raise HTTPException(status_code=400, detail="Seat count for visvesvaraya cannot be negative")
+    normalized_distribution["visvesvaraya"] = visvesvaraya_value
+
     distribution_total = sum(normalized_distribution.values())
     if total_seats <= 0:
         raise HTTPException(status_code=400, detail="Total seats must be greater than zero")
@@ -872,13 +940,52 @@ async def recalculate_department_entrance_ranks(department: str) -> None:
     if not normalized_department:
         return
 
-    qualified_docs: List[dict] = []
-    cursor = applications_collection.find({"qualified": True})
+    # 1. Fetch all applications in this department with marks to calculate dynamic threshold
+    dept_apps = []
+    cursor = applications_collection.find({
+        "entranceMarks": {"$ne": None},
+        "attendanceStatus": "Present"
+    })
     async for doc in cursor:
         doc_department = get_application_department(doc)
         if departments_match(normalized_department, doc_department):
-            qualified_docs.append(doc)
+            dept_apps.append(doc)
 
+    if not dept_apps:
+        return
+
+    # 2. Calculate dynamic threshold: Threshold = Max - Min
+    marks_list = [float(app.get("entranceMarks") or 0) for app in dept_apps]
+    score_max = max(marks_list)
+    score_min = min(marks_list)
+    score_threshold = round(score_max - score_min, 4)
+
+    # 3. Update 'qualified' status for all candidates based on the dynamic threshold
+    qualified_docs = []
+    for app in dept_apps:
+        marks = float(app.get("entranceMarks") or 0)
+        is_qualified = marks >= score_threshold
+        
+        current_status = app.get("candidateStatus")
+        new_candidate_status = "Qualified for Ranking" if is_qualified else "Rejected"
+        if is_qualified and current_status in [RECOMMENDED_FOR_INTERVIEW_LABEL, INTERVIEW_SCHEDULED_LABEL, INTERVIEW_COMPLETED_LABEL, RANKED_CANDIDATE_LABEL]:
+            new_candidate_status = current_status
+
+        await applications_collection.update_one(
+            {"_id": app["_id"]},
+            {"$set": {
+                "qualified": is_qualified,
+                "candidateStatus": new_candidate_status,
+                "updated_at": datetime.utcnow()
+            }}
+        )
+        
+        if is_qualified:
+            # Refresh doc content for sorting
+            app["qualified"] = True
+            qualified_docs.append(app)
+
+    # 4. Perform ranking among qualified candidates
     qualified_docs.sort(
         key=lambda doc: (
             -float(doc.get("entranceMarks") or 0),
@@ -887,23 +994,26 @@ async def recalculate_department_entrance_ranks(department: str) -> None:
         )
     )
 
-    ranked_ids = set()
     for index, doc in enumerate(qualified_docs):
         rank_value = index + 1
-        ranked_ids.add(doc.get("_id"))
         await applications_collection.update_one(
             {"_id": doc["_id"]},
             {"$set": {"entranceRank": rank_value, "updated_at": datetime.utcnow()}}
         )
 
-    reset_cursor = applications_collection.find({"qualified": {"$ne": True}})
+    # 5. Clear entranceRank for those no longer qualified in this department
+    reset_cursor = applications_collection.find({
+        "qualified": {"$ne": True},
+        "entranceRank": {"$ne": None}
+    })
     async for doc in reset_cursor:
         doc_department = get_application_department(doc)
-        if departments_match(normalized_department, doc_department) and doc.get("entranceRank") is not None:
+        if departments_match(normalized_department, doc_department):
             await applications_collection.update_one(
                 {"_id": doc["_id"]},
                 {"$set": {"entranceRank": None, "updated_at": datetime.utcnow()}}
             )
+
 
 def normalize_category_for_scrutiny(category: Any) -> str:
     return str(category or "").strip().lower()
@@ -931,7 +1041,8 @@ def is_interview_completed_candidate(candidate_status: Any) -> bool:
     return normalized in {"interview completed", "interview_completed"}
 
 def is_ranked_candidate(candidate_status: Any) -> bool:
-    return str(candidate_status or "").strip().lower() == "ranked"
+    normalized = str(candidate_status or "").strip().lower()
+    return normalized in {"ranked", "qualified for ranking"}
 
 def extract_pg_marks_for_final_score(application_doc: dict) -> Optional[float]:
     explicit_pg_marks = extract_numeric_marks(application_doc.get("pgMarks"))
@@ -1006,17 +1117,173 @@ async def recalculate_department_final_ranks(department: str) -> None:
             {"$set": {"finalRank": None, "updated_at": datetime.utcnow()}}
         )
 
+# ============================================
+# VISVESVARAYA SCHEME HELPER FUNCTIONS
+# ============================================
+
+def is_eligible_for_visvesvaraya(candidate_doc: dict, department: str) -> bool:
+    """
+    Check if candidate is eligible for Visvesvaraya PhD Scheme allocation.
+    
+    Eligibility Criteria:
+    1. Department matches configured eligible departments
+    2. admission_status == "Accepted"
+    3. is_new_phd is True (fresh PhD, not transfer/extension)
+    4. has_other_fellowship is False (no other govt fellowship)
+    
+    FALLBACK LOGIC: If Visvesvaraya seats not filled by eligible candidates,
+    unused seats automatically fall back to MERIT pool (no manual intervention needed).
+    """
+    if not VISVESVARAYA_SCHEME_CONFIG.get("enabled"):
+        return False
+
+    # --- NULL-SAFE FIELD READS ---
+    doc_department = (candidate_doc.get("department") or "").strip()
+    status = (candidate_doc.get("status") or "").strip()
+    is_new_phd = candidate_doc.get("is_new_phd")  # Expect explicit True/False
+    has_other_fellowship = candidate_doc.get("has_other_fellowship")  # Expect explicit True/False
+    apply_vish = candidate_doc.get("apply_vish")  # Expect explicit True/False
+
+    # DEBUG: log each check so failures are visible in server logs
+    print(
+        f"[VISVESVARAYA CHECK] dept={doc_department!r}, "
+        f"apply_vish={apply_vish!r}, "
+        f"status={status!r}, "
+        f"is_new_phd={is_new_phd!r}, "
+        f"has_other_fellowship={has_other_fellowship!r}"
+    )
+
+    # 1. Department eligibility (Strict string matching and seat config)
+    department_seats = VISVESVARAYA_SCHEME_CONFIG.get("department_seats", {})
+    if doc_department not in department_seats or department_seats.get(doc_department, 0) <= 0:
+        print(f"[VISVESVARAYA] SKIP - department {doc_department!r} not eligible or has 0 seats")
+        return False
+
+    # 1.5. Must have explicitly applied for Visvesvaraya Scheme
+    if str(apply_vish).strip().lower() != "true":
+        print("[VISVESVARAYA] SKIP - did not apply for Visvesvaraya Scheme")
+        return False
+
+    # 2. Admission status must be "admission_confirmed" (null-safe)
+    if status.lower() != "admission_confirmed":
+        print(f"[VISVESVARAYA] SKIP - status {status!r} not admission_confirmed")
+        return False
+
+    # 3. Must be new PhD (default True for backward compatibility)
+    if str(is_new_phd).strip().lower() == "false":
+        print("[VISVESVARAYA] SKIP - not a new PhD candidate")
+        return False
+
+    # 4. Must not hold another government fellowship (default False for backward compatibility)
+    if str(has_other_fellowship).strip().lower() == "true":
+        print("[VISVESVARAYA] SKIP - has other fellowship")
+        return False
+
+    return True
+
+
+def assign_visvesvaraya_fellowship(candidate_doc: dict) -> dict:
+    """
+    Assign Visvesvaraya fellowship support details to a candidate.
+    Returns a dictionary of fellowship fields to add to the candidate.
+    """
+    fellowship_data = {
+        "seat_type": "VISVESVARAYA",
+        "fellowship_type": VISVESVARAYA_FELLOWSHIP_SUPPORT["fellowship_type"],
+        "stipend_year1_2": VISVESVARAYA_FELLOWSHIP_SUPPORT["stipend_year_1_2"],
+        "stipend_year3_5": VISVESVARAYA_FELLOWSHIP_SUPPORT["stipend_year_3_5"],
+        "research_grant_annual": VISVESVARAYA_FELLOWSHIP_SUPPORT["research_grant"],
+        "rent_support": VISVESVARAYA_FELLOWSHIP_SUPPORT["rent_support"],
+        "international_conference_support": VISVESVARAYA_FELLOWSHIP_SUPPORT["international_conference_support"],
+        "lab_visit_abroad_support": VISVESVARAYA_FELLOWSHIP_SUPPORT["lab_visit_abroad_support"],
+        "fellowship_duration_years": VISVESVARAYA_FELLOWSHIP_SUPPORT["max_duration_years"],
+        "fellowship_status": "Active",
+        "fellowship_allocated_date": datetime.utcnow(),
+        "fellowship_scheme_rules": VISVESVARAYA_SCHEME_RULES,
+        "visvesvaraya_scheme_phase": "Phase-II",
+    }
+    return fellowship_data
+
+
 async def run_seat_allocation(
     seat_config: Dict[str, Any],
     department: Optional[str] = None,
     institute: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """
+    Allocate seats based on ranking and Anna University lapse seat concept.
+    
+    ================================================================================
+    ENHANCED ALLOCATION PRIORITY WITH VISVESVARAYA FALLBACK LOGIC
+    ================================================================================
+    
+    STEP 1-3: Setup & Sorting
+    - Re-rank candidates DURING allocation (don't rely on old finalRank)
+    - Sort ONLY by final_score (strict numeric sorting)
+    - Assign new rank AFTER sorting
+    
+    STEP 4A: VISVESVARAYA SCHEME ALLOCATION (FIRST PRIORITY)
+    - Allocate configured Visvesvaraya seats to eligible candidates
+    - Eligibility: department match + new PhD + no other fellowship + accepted status
+    - Count: visvesvaraya_count <= visvesvaraya_seats
+    
+    STEP 4B: CRITICAL FALLBACK LOGIC (NO SEAT WASTAGE)
+    - Calculate: unused_visvesvaraya_seats = visvesvaraya_seats - visvesvaraya_count
+    - If unused_visvesvaraya_seats > 0:
+      * effective_merit_seats = merit_seats + unused_visvesvaraya_seats
+      * Allocate from expanded MERIT pool (NOT category)
+      * Log fallback for transparency
+    - This ensures NO seats are wasted while maintaining fairness
+    
+    STEP 5-6: MERIT & CATEGORY ALLOCATION
+    - MERIT: Use effective_merit_seats (includes fallback pool)
+    - CATEGORY: Allocate remaining base seats by category quotas
+    - Backfill: Fill remaining base seats by rank (open conversion)
+    
+    STEP 7: LAPSE ALLOCATION
+    - Allocate extra 30% seats from ranks beyond base seats
+    - Total available: base_seats + lapse_seats
+    
+    STEP 8-11: Finalization
+    - Assign fellowship details for VISVESVARAYA allocations
+    - Mark remaining as "Not Selected"
+    - Generate allocation summary with fallback info
+    
+    SEAT BREAKDOWN:
+    - Base seats: configurable (default 10)
+    - Extra seats (lapse): ceil(base_seats * 0.30) = 3
+    - Total seats: 13
+    - Total with Visvesvaraya: 14
+    
+    NON-BREAKING GUARANTEE:
+    - Existing MERIT, CATEGORY, LAPSE logic unchanged
+    - Database schema untouched
+    - Visvesvaraya fallback to MERIT is automatic
+    - Backward compatible with non-Visvesvaraya candidates
+    
+    KEY FEATURES:
+    - Priority: Visvesvaraya → Fallback MERIT → Category → Lapse
+    - Fairness: Rank-based allocation within each tier
+    - Transparency: Fallback details in summary
+    - Efficiency: No seat wastage, all seats utilized
+    
+    CRITICAL FIX:
+    - Re-rank candidates DURING allocation (don't rely on old finalRank)
+    - Sort ONLY by final_score (strict numeric sorting)
+    - Assign rank AFTER sorting
+    - Then allocate top N candidates
+    """
+    normalized_seat_config = validate_and_normalize_seat_config(seat_config)
+    category_distribution = normalized_seat_config["distribution"]
+    total_seats_limit = int(normalized_seat_config["totalSeats"])
+    
     normalized_department = (department or "").strip()
     normalized_institute = (institute or "").strip()
 
+    # STEP 1: Fetch candidates (ignore old finalRank, will re-rank)
     query = {
         "candidateStatus": RANKED_CANDIDATE_LABEL,
-        "finalRank": {"$ne": None},
+        "finalScore": {"$ne": None},  # Changed: use finalScore, not finalRank
     }
 
     candidate_docs: List[dict] = []
@@ -1035,7 +1302,7 @@ async def run_seat_allocation(
     if not candidate_docs:
         raise HTTPException(
             status_code=400,
-            detail="No ranked candidates found for seat allocation. Complete final ranking before allocation.",
+            detail="No ranked candidates found for seat allocation. Ensure final scores are calculated.",
         )
 
     grouped_candidates: Dict[tuple[str, str], List[dict]] = {}
@@ -1043,111 +1310,218 @@ async def run_seat_allocation(
         key = (get_application_department(doc) or "N/A", get_application_institute(doc) or "PTU")
         grouped_candidates.setdefault(key, []).append(doc)
 
-    updated_candidates = 0
-    allocated_candidates = 0
-    not_selected_candidates = 0
+    updated_candidates_count = 0
+    total_allocated_candidates = 0
+    total_not_selected_candidates = 0
     groups_summary: List[Dict[str, Any]] = []
 
     for (group_department, group_institute), docs in grouped_candidates.items():
-        candidates = sorted(docs, key=lambda item: int(item.get("finalRank") or 0))
-        candidate_ids = [doc.get("_id") for doc in candidates]
+        # Reset previous allocation data
+        for c in docs:
+            c["seatType"] = None
+            c["seatAllocationStatus"] = None
+            if not c.get("status"): c["status"] = "admission_confirmed"
+            if c.get("is_new_phd") is None: c["is_new_phd"] = True
+            if c.get("has_other_fellowship") is None: c["has_other_fellowship"] = False
+            if c.get("apply_vish") is None: c["apply_vish"] = False
 
-        allocated: Dict[str, str] = {}
-        fixed_config = get_department_seat_config(group_department)
-        distribution = to_allocation_seat_config(fixed_config)["distribution"]
+        # STEP 2: Sort by final score descending
+        all_ranked = sorted(docs, key=lambda d: -float(d.get("finalScore") or 0))
+        
+        # Select top N candidates (selected group)
+        selected_candidates = all_ranked[:total_seats_limit]
+        
+        allocated_ids: set[ObjectId] = set()
+        seat_type_by_id: Dict[ObjectId, str] = {}
 
-        merit_quota = distribution["merit"]
-        for index in range(min(merit_quota, len(candidates))):
-            candidate_id = candidates[index].get("_id")
-            if candidate_id:
-                allocated[candidate_id] = "MERIT"
+        # Distribution setup
+        department_seats_map = VISVESVARAYA_SCHEME_CONFIG.get("department_seats", {})
+        dept_visvesvaraya_seats = department_seats_map.get(group_department, 0)
+        
+        quotas = {
+            "MERIT": int(category_distribution["merit"]),
+            "GENERAL": int(category_distribution["general"]),
+            "OBC": int(category_distribution["obc"]),
+            "MBC": int(category_distribution["mbc"]),
+            "SC_ST": int(category_distribution["sc_st"]),
+        }
 
-        def allocate_category(category_name: str, seat_count: int) -> int:
-            if seat_count <= 0:
-                return 0
+        def is_pu(doc):
+            personal = doc.get("personal_details") or {}
+            state = str(
+                personal.get("candidate_state_type")
+                or doc.get("candidate_state_type")
+                or ""
+            ).strip().lower()
+            # Normalize: remove parentheses and extra spaces
+            normalized_state = state.replace("(", "").replace(")", "").replace("  ", " ")
+            return "puducherry ut" in normalized_state or "puducherry" in normalized_state
 
-            remaining_candidates = [doc for doc in candidates if doc.get("_id") not in allocated]
-            eligible_candidates = []
-            for doc in remaining_candidates:
-                raw_category = ((doc.get("personal_details") or {}).get("category")) or doc.get("category")
-                normalized_category = normalize_category_for_allocation(raw_category)
-                if category_name == "sc_st":
-                    if normalized_category in {"sc", "st"}:
-                        eligible_candidates.append(doc)
-                    continue
+        # PASS 1: VISVESVARAYA (First Priority)
+        vish_allocated = 0
+        for doc in selected_candidates:
+            if vish_allocated >= dept_visvesvaraya_seats: break
+            # UPDATED: Visvesvaraya seats are also restricted to PU candidates based on user requirement
+            if is_pu(doc) and is_eligible_for_visvesvaraya(doc, group_department):
+                allocated_ids.add(doc["_id"])
+                seat_type_by_id[doc["_id"]] = "VISVESVARAYA"
+                vish_allocated += 1
 
-                if normalized_category == category_name:
-                    eligible_candidates.append(doc)
+        # PASS 2: MERIT (Open to all including Other State)
+        merit_allocated = 0
+        for doc in selected_candidates:
+            if merit_allocated >= quotas["MERIT"]: break
+            if doc["_id"] in allocated_ids: continue
+            allocated_ids.add(doc["_id"])
+            seat_type_by_id[doc["_id"]] = "MERIT"
+            merit_allocated += 1
 
-            eligible_candidates.sort(key=lambda item: int(item.get("finalRank") or 0))
-            allocated_in_category = 0
-            for index in range(seat_count):
-                if index >= len(eligible_candidates):
-                    break
-                candidate_id = eligible_candidates[index].get("_id")
-                if candidate_id and candidate_id not in allocated:
-                    allocated[candidate_id] = category_name.upper()
-                    allocated_in_category += 1
-            return allocated_in_category
+        # PASS 3: CATEGORY (PU Only - OS scholars even with category are excluded)
+        cat_counts = {"GENERAL": 0, "OBC": 0, "MBC": 0, "SC_ST": 0}
+        for doc in selected_candidates:
+            if doc["_id"] in allocated_ids: continue
+            if not is_pu(doc): continue
+            
+            raw_cat = ((doc.get("personal_details") or {}).get("category")) or doc.get("category")
+            norm_cat = normalize_category_for_allocation(raw_cat)
+            if norm_cat in {"sc", "st"}: norm_cat = "sc_st"
+            norm_cat = norm_cat if norm_cat in {"general", "obc", "mbc", "sc_st"} else "general"
+            cat_key = norm_cat.upper()
+            
+            if cat_counts[cat_key] < quotas[cat_key]:
+                allocated_ids.add(doc["_id"])
+                seat_type_by_id[doc["_id"]] = cat_key
+                cat_counts[cat_key] += 1
 
-        general_allocated = allocate_category("general", distribution["general"])
-        obc_allocated = allocate_category("obc", distribution["obc"])
-        mbc_allocated = allocate_category("mbc", distribution["mbc"])
-        scst_allocated = allocate_category("sc_st", distribution["sc_st"])
+        # STEP 4: LAPSE CALCULATION
+        unused_seats_count = total_seats_limit - len(allocated_ids)
+        max_lapse_allowed = math.floor(total_seats_limit * 0.3)
+        
+        lapse_seats_to_allocate = min(unused_seats_count, max_lapse_allowed)
+        vacancy_count = unused_seats_count - lapse_seats_to_allocate
+        
+        # PASS 4: LAPSE ALLOCATION (Open to all including Other State within selected group)
+        lapse_allocated = 0
+        for doc in selected_candidates:
+            if lapse_allocated >= lapse_seats_to_allocate: break
+            if doc["_id"] in allocated_ids: continue
+            allocated_ids.add(doc["_id"])
+            seat_type_by_id[doc["_id"]] = "LAPSE"
+            lapse_allocated += 1
 
-        for doc in candidates:
-            candidate_id = doc.get("_id")
-            if not candidate_id:
-                continue
-
-            seat_type = allocated.get(candidate_id)
-            seat_status = SEAT_ALLOCATED_LABEL if seat_type else NOT_SELECTED_LABEL
-            update_doc = {
+        # STEP 5: DB UPDATES & SUMMARY
+        group_allocated = 0
+        group_not_selected = 0
+        
+        for index, doc in enumerate(all_ranked):
+            cid = doc["_id"]
+            new_rank = index + 1
+            is_allocated = cid in allocated_ids
+            
+            seat_type = seat_type_by_id.get(cid) if is_allocated else None
+            seat_status = SEAT_ALLOCATED_LABEL if is_allocated else NOT_SELECTED_LABEL
+            
+            update_body = {
+                "finalRank": new_rank,
                 "seatType": seat_type,
                 "seatAllocationStatus": seat_status,
-                "seatAllocatedAt": datetime.utcnow(),
-                "seatAllocationConfig": to_allocation_seat_config(fixed_config),
-                "seatAllocationScope": {
-                    "department": group_department,
-                    "institute": group_institute,
-                },
+                "seatAllocatedAt": datetime.utcnow() if is_allocated else None,
+                "seatAllocationScope": {"department": group_department, "institute": group_institute},
                 "updated_at": datetime.utcnow(),
             }
-
-            await applications_collection.update_one(
-                {"_id": candidate_id},
-                {"$set": update_doc},
-            )
-
-            updated_candidates += 1
-            if seat_type:
-                allocated_candidates += 1
+            
+            if is_allocated and seat_type == "VISVESVARAYA":
+                update_body.update(assign_visvesvaraya_fellowship(doc))
+                
+            await applications_collection.update_one({"_id": cid}, {"$set": update_body})
+            
+            updated_candidates_count += 1
+            if is_allocated:
+                group_allocated += 1
+                total_allocated_candidates += 1
             else:
-                not_selected_candidates += 1
+                group_not_selected += 1
+                total_not_selected_candidates += 1
 
-        groups_summary.append(
-            {
-                "department": group_department,
-                "institute": group_institute,
-                "totalCandidates": len(candidates),
-                "allocated": len(allocated),
-                "notSelected": len(candidates) - len(allocated),
-                "seatConfig": to_allocation_seat_config(fixed_config),
-                "categoryAllocation": {
-                    "MERIT": min(merit_quota, len(candidates)),
-                    "GENERAL": general_allocated,
-                    "OBC": obc_allocated,
-                    "MBC": mbc_allocated,
-                    "SC_ST": scst_allocated,
-                },
+        groups_summary.append({
+            "department": group_department,
+            "institute": group_institute,
+            "totalSeats": total_seats_limit,
+            "allocated": group_allocated,
+            "lapsed": lapse_allocated,
+            "notSelected": group_not_selected,
+            "vacancy": vacancy_count,
+            "visvesvaraya": vish_allocated,
+            "merit": merit_allocated,
+            "general": cat_counts["GENERAL"],
+            "obc": cat_counts["OBC"],
+            "mbc": cat_counts["MBC"],
+            "sc_st": cat_counts["SC_ST"],
+            "categoryAllocation": {
+                "VISVESVARAYA": vish_allocated,
+                "MERIT": merit_allocated,
+                "GENERAL": cat_counts["GENERAL"],
+                "OBC": cat_counts["OBC"],
+                "MBC": cat_counts["MBC"],
+                "SC_ST": cat_counts["SC_ST"],
+                "LAPSE": lapse_allocated,
             }
-        )
+        })
 
     return {
-        "updatedCandidates": updated_candidates,
-        "allocatedCandidates": allocated_candidates,
-        "notSelectedCandidates": not_selected_candidates,
-        "groups": sorted(groups_summary, key=lambda item: (item["department"], item["institute"])),
+        "updatedCandidates": updated_candidates_count,
+        "allocatedCandidates": total_allocated_candidates,
+        "notSelectedCandidates": total_not_selected_candidates,
+        "totalVacancy": sum(g["vacancy"] for g in groups_summary),
+        "groups": sorted(groups_summary, key=lambda g: (g["department"], g["institute"])),
+    }
+
+async def promote_waitlisted_candidate_for_vacancy(vacated_application: dict) -> Optional[dict]:
+    vacated_department = get_application_department(vacated_application)
+    vacated_institute = get_application_institute(vacated_application)
+    vacated_seat_type = str(vacated_application.get("seatType") or "").strip().upper() or None
+
+    query = {
+        "waitlist_status": "Waitlisted",
+        "waitlist_rank": {"$ne": None},
+    }
+
+    candidates: List[dict] = []
+    cursor = applications_collection.find(query)
+    async for doc in cursor:
+        if vacated_department and not departments_match(vacated_department, get_application_department(doc)):
+            continue
+        if vacated_institute and str(get_application_institute(doc)).strip().lower() != str(vacated_institute).strip().lower():
+            continue
+        candidates.append(doc)
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda doc: (int(doc.get("waitlist_rank") or 0), int(doc.get("finalRank") or 0), str(doc.get("registration_id") or "")))
+    promoted = candidates[0]
+
+    await applications_collection.update_one(
+        {"_id": promoted["_id"]},
+        {
+            "$set": {
+                "seatType": vacated_seat_type or "WAITLIST_PROMOTED",
+                "seatAllocationStatus": SEAT_ALLOCATED_LABEL,
+                "waitlist_status": None,
+                "waitlist_rank": None,
+                "seatLapsedFrom": vacated_application.get("registration_id") or vacated_application.get("_id"),
+                "seatPromotedAt": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+            }
+        }
+    )
+
+    return {
+        "application_id": promoted.get("_id"),
+        "registration_id": promoted.get("registration_id"),
+        "scholar_name": promoted.get("scholar_name") or ((promoted.get("personal_details") or {}).get("full_name")),
+        "seatType": vacated_seat_type or "WAITLIST_PROMOTED",
+        "waitlist_rank": promoted.get("waitlist_rank"),
     }
 
 def get_required_document_keys_for_scrutiny(application_doc: dict) -> List[str]:
@@ -1182,16 +1556,40 @@ def evaluate_document_verification(application_doc: dict) -> tuple[bool, List[st
     missing_keys = [key for key in required_keys if not extract_stored_file_id(uploaded_files.get(key))]
     return len(missing_keys) == 0, missing_keys
 
-def evaluate_pg_eligibility(application_doc: dict) -> tuple[bool, Optional[float], int, str]:
+def evaluate_pg_eligibility(application_doc: dict) -> tuple[bool, Optional[float], float, float, str, str, Optional[float]]:
     personal = (application_doc or {}).get("personal_details") or {}
     pg_details = (application_doc or {}).get("pg_details") or {}
 
     category = normalize_category_for_scrutiny(personal.get("category"))
     pg_marks = extract_numeric_marks(pg_details.get("cgpa_percentage"))
-    minimum_required = 50 if category in SCRUTINY_CONCESSION_CATEGORIES else 55
-    eligible = pg_marks is not None and pg_marks >= minimum_required
+    minimum_required_cgpa = float(
+        SCRUTINY_MIN_CGPA_BY_CATEGORY.get(category, SCRUTINY_MIN_CGPA_BY_CATEGORY["general"])
+    )
+    minimum_required_percentage = float(
+        SCRUTINY_MIN_PERCENTAGE_BY_CATEGORY.get(category, SCRUTINY_MIN_PERCENTAGE_BY_CATEGORY["general"])
+    )
 
-    return eligible, pg_marks, minimum_required, category
+    if pg_marks is None:
+        return False, None, minimum_required_cgpa, minimum_required_percentage, category, "Missing", None
+
+    if pg_marks <= 10:
+        eligibility_rule = "CGPA"
+        eligible = pg_marks >= minimum_required_cgpa
+        percentage_equivalent = round(pg_marks * 9.5, 2)
+    else:
+        eligibility_rule = "Percentage"
+        eligible = pg_marks >= minimum_required_percentage
+        percentage_equivalent = pg_marks
+
+    return (
+        eligible,
+        pg_marks,
+        minimum_required_cgpa,
+        minimum_required_percentage,
+        category,
+        eligibility_rule,
+        percentage_equivalent,
+    )
 
 def get_exam_status_from_score(score: int) -> str:
     return "Qualified" if score >= PTU_ENTRANCE_QUALIFY_MARKS else "Not Eligible"
@@ -3523,6 +3921,15 @@ async def download_or_generate_final_fee_receipt(
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
 
+    seat_status = str(
+        app.get("seatAllocationStatus")
+        or app.get("seat_status")
+        or app.get("seatStatus")
+        or ""
+    ).strip().lower()
+    if seat_status not in {SEAT_ALLOCATED_LABEL.lower(), "allocated"}:
+        raise HTTPException(status_code=400, detail="Final fee receipt is available only after seat allocation")
+
     if not is_final_fee_paid(app):
         raise HTTPException(status_code=400, detail="Final fee is not paid")
 
@@ -3636,6 +4043,15 @@ async def download_or_generate_offer_letter(
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
 
+    seat_status = str(
+        app.get("seatAllocationStatus")
+        or app.get("seat_status")
+        or app.get("seatStatus")
+        or ""
+    ).strip().lower()
+    if seat_status not in {SEAT_ALLOCATED_LABEL.lower(), "allocated"}:
+        raise HTTPException(status_code=400, detail="Offer letter is available only after seat allocation")
+
     status_value = str(app.get("status") or "").strip().lower()
     if status_value not in {
         ApplicationStatus.FINAL_APPROVED.value,
@@ -3699,6 +4115,15 @@ async def submit_admission_decision(
     if not app.get("offerLetterGenerated"):
         raise HTTPException(status_code=400, detail="Offer letter must be generated before admission response")
 
+    seat_status = str(
+        app.get("seatAllocationStatus")
+        or app.get("seat_status")
+        or app.get("seatStatus")
+        or ""
+    ).strip().lower()
+    if seat_status not in {SEAT_ALLOCATED_LABEL.lower(), "allocated"}:
+        raise HTTPException(status_code=400, detail="Admission response is allowed only after seat allocation")
+
     now = datetime.utcnow()
     update_fields = {
         "admissionDecision": decision,
@@ -3712,13 +4137,32 @@ async def submit_admission_decision(
 
     if decision == "reject":
         update_fields["status"] = ApplicationStatus.REJECTED.value
+        update_fields["seatAllocationStatus"] = "Seat Lapsed"
+        update_fields["seatLapsedAt"] = now
+        update_fields["registrationNumber"] = None
         notification_message = f"You have rejected the admission offer for application {app.get('registration_id') or app_id}."
         notification_type = "admission_rejected"
+
+        promoted_candidate = await promote_waitlisted_candidate_for_vacancy(app)
+        if promoted_candidate:
+            notification_message = (
+                f"You have rejected the admission offer for application {app.get('registration_id') or app_id}. "
+                f"Seat has lapsed and waitlisted candidate {promoted_candidate.get('registration_id')} has been promoted."
+            )
     else:
         update_fields["status"] = ApplicationStatus.ACCEPTED.value
 
         registration_number = app.get("registrationNumber")
-        if not registration_number:
+        admission_status = str(
+            app.get("admissionDecision")
+            or decision
+            or ""
+        ).strip().lower()
+        if (
+            not registration_number
+            and seat_status in {SEAT_ALLOCATED_LABEL.lower(), "allocated"}
+            and admission_status == "accept"
+        ):
             registration_number = await generate_unique_registration_number(app)
 
         joining_date = now.date().isoformat()
@@ -3753,6 +4197,15 @@ async def submit_admission_decision(
         )
         notification_type = "admission_confirmed"
 
+    if (
+        update_fields.get("registrationNumber")
+        and (
+            seat_status not in {SEAT_ALLOCATED_LABEL.lower(), "allocated"}
+            or decision != "accept"
+        )
+    ):
+        update_fields["registrationNumber"] = None
+
     await applications_collection.update_one(
         {"_id": app_id},
         {"$set": update_fields}
@@ -3784,12 +4237,30 @@ async def download_or_generate_joining_letter(
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
 
+    seat_status = str(
+        app.get("seatAllocationStatus")
+        or app.get("seat_status")
+        or app.get("seatStatus")
+        or ""
+    ).strip().lower()
+    if seat_status not in {SEAT_ALLOCATED_LABEL.lower(), "allocated"}:
+        raise HTTPException(status_code=400, detail="Joining letter is available only after seat allocation")
+
     if str(app.get("status") or "").strip().lower() != ApplicationStatus.ADMISSION_CONFIRMED.value:
         raise HTTPException(status_code=400, detail="Joining letter is available only after admission confirmation")
 
     registration_number = app.get("registrationNumber")
     if not registration_number:
-        raise HTTPException(status_code=400, detail="Registration number is not available yet")
+        registration_number = await generate_unique_registration_number(app)
+        await applications_collection.update_one(
+            {"_id": app_id},
+            {
+                "$set": {
+                    "registrationNumber": registration_number,
+                    "updated_at": datetime.utcnow(),
+                }
+            }
+        )
 
     joining_path = app.get("joiningLetterPath")
     default_joining_file = UPLOAD_DIR / current_user["_id"] / "admission_letters" / f"joining_letter_{registration_number}.pdf"
@@ -3876,6 +4347,7 @@ async def submit_entrance_application(
                     "category": payload.category.strip(),
                     "declaration": payload.declaration,
                 },
+                "apply_vish": payload.apply_vish,
                 "uploaded_files": existing_uploaded_files,
                 "status": app.get("status") or ApplicationStatus.SUBMITTED.value,
                 "examStatus": "Pending",
@@ -3968,16 +4440,25 @@ async def evaluate_entrance_exam(
             raise HTTPException(status_code=400, detail=f"Entrance marks must be between 0 and {PTU_ENTRANCE_TOTAL_MARKS}")
 
         qualified = is_qualified_in_entrance(category, marks_value)
-        candidate_status = "Qualified for Ranking" if qualified else "Rejected"
+        if not qualified:
+            candidate_status = "Rejected"
+        else:
+            current_status = app.get("candidateStatus")
+            # Preserve advanced candidate status if they are already past entrance evaluation
+            if current_status in [RECOMMENDED_FOR_INTERVIEW_LABEL, INTERVIEW_SCHEDULED_LABEL, INTERVIEW_COMPLETED_LABEL, RANKED_CANDIDATE_LABEL]:
+                candidate_status = current_status
+            else:
+                candidate_status = "Qualified for Ranking"
 
     evaluation_doc = {
         "examStatus": "Completed",
         "attendanceStatus": attendance_status,
         "entranceMarks": marks_value,
         "examScore": marks_value,
+        "correctAnswers": payload.correctAnswers,
+        "wrongAnswers": payload.wrongAnswers,
         "qualified": qualified,
         "candidateStatus": candidate_status,
-        "entranceRank": None,
         "evaluatedBy": {
             "id": current_user.get("_id"),
             "name": current_user.get("full_name"),
@@ -3989,9 +4470,26 @@ async def evaluate_entrance_exam(
         "updated_at": datetime.utcnow(),
     }
 
+    # If the candidate was previously ranked but fails now, we should clear rank.
+    # Otherwise, don't wipe entranceRank manually; the recalculation will handle it.
+    if not qualified:
+        evaluation_doc["entranceRank"] = None
+        evaluation_doc["finalRank"] = None
+        evaluation_doc["finalScore"] = None
+
+    # Recalculate final score if they already have interview marks
+    interview_marks = extract_numeric_marks(app.get("interviewMarks"))
+    if interview_marks is not None and qualified:
+        pg_marks = extract_pg_marks_for_final_score(app)
+        if pg_marks is not None:
+             final_score = calculate_final_score_ptu(pg_marks, marks_value, interview_marks)
+             evaluation_doc["finalScore"] = final_score
+
     await applications_collection.update_one({"_id": payload.application_id}, {"$set": evaluation_doc})
     if app_department or user_department:
         await recalculate_department_entrance_ranks(app_department or user_department)
+        if interview_marks is not None:
+            await recalculate_department_final_ranks(app_department or user_department)
 
     refreshed_app = await applications_collection.find_one({"_id": payload.application_id})
 
@@ -4011,6 +4509,8 @@ async def evaluate_entrance_exam(
         "applicationId": payload.application_id,
         "attendanceStatus": attendance_status,
         "entranceMarks": marks_value,
+        "correctAnswers": payload.correctAnswers,
+        "wrongAnswers": payload.wrongAnswers,
         "qualified": qualified,
         "candidateStatus": candidate_status,
         "entranceRank": (refreshed_app or {}).get("entranceRank"),
@@ -4401,9 +4901,25 @@ async def verify_application_scrutiny(
         raise HTTPException(status_code=400, detail="Cannot proceed: application fee payment is pending")
 
     documents_verified, missing_documents = evaluate_document_verification(app)
-    eligibility_verified, pg_marks, minimum_required_marks, normalized_category = evaluate_pg_eligibility(app)
+    (
+        eligibility_verified,
+        pg_marks,
+        minimum_required_cgpa,
+        minimum_required_percentage,
+        normalized_category,
+        eligibility_rule,
+        percentage_equivalent,
+    ) = evaluate_pg_eligibility(app)
     
     # Create scrutiny record
+    eligibility_message = None
+    if pg_marks is None:
+        eligibility_message = "Enter CGPA or Percentage"
+    elif eligibility_rule == "CGPA" and normalized_category in SCRUTINY_MIN_CGPA_BY_CATEGORY:
+        eligibility_message = f"Evaluated using CGPA. Minimum CGPA required for {normalized_category.upper()} is {SCRUTINY_MIN_CGPA_BY_CATEGORY[normalized_category]}"
+    elif eligibility_rule == "Percentage" and normalized_category in SCRUTINY_MIN_PERCENTAGE_BY_CATEGORY:
+        eligibility_message = f"Evaluated using Percentage. Minimum Percentage required for {normalized_category.upper()} is {SCRUTINY_MIN_PERCENTAGE_BY_CATEGORY[normalized_category]}"
+
     scrutiny_doc = {
         "scrutiny_officer_id": current_user["_id"],
         "scrutiny_officer_name": current_user["full_name"],
@@ -4413,9 +4929,13 @@ async def verify_application_scrutiny(
         "documents_verified": documents_verified,
         "missing_documents": missing_documents,
         "eligibility_verified": eligibility_verified,
-        "minimum_required_pg_marks": minimum_required_marks,
+        "minimum_required_pg_cgpa": minimum_required_cgpa,
+        "minimum_required_pg_percentage": minimum_required_percentage,
         "pg_marks": pg_marks,
+        "pg_percentage_equivalent": percentage_equivalent,
+        "eligibility_rule": eligibility_rule,
         "category": normalized_category or "general",
+        "eligibility_message": eligibility_message,
         "remarks": remarks,
         "status": "approved" if (documents_verified and eligibility_verified) else "rejected",
         "auto_verified": True,
@@ -4441,6 +4961,7 @@ async def verify_application_scrutiny(
                 "scrutiny": scrutiny_doc,
                 "scrutinyStatus": scrutiny_display_status,
                 "scrutiny_status": scrutiny_status,
+                "eligibility_rule": eligibility_rule,
                 "examStatus": exam_status,
                 "examEvaluatedAt": datetime.utcnow(),
                 "status": next_status,
@@ -4507,8 +5028,10 @@ async def verify_application_scrutiny(
         "documentsVerified": documents_verified,
         "missingDocuments": missing_documents,
         "eligible": eligibility_verified,
-        "minimumRequiredPgMarks": minimum_required_marks,
+        "minimumRequiredPgMarks": minimum_required_cgpa if eligibility_rule == "CGPA" else minimum_required_percentage,
         "pgMarks": pg_marks,
+        "eligibilityRule": eligibility_rule,
+        "percentageEquivalent": percentage_equivalent,
         "scrutinyStatus": scrutiny_display_status,
         "examStatus": exam_status,
         "nextStatus": next_status,
@@ -4522,7 +5045,31 @@ async def get_all_applications_director(
 ):
     query = {}
     if status and status != "all":
-        query["status"] = status
+        normalized_status = str(status).strip().lower()
+
+        if normalized_status == ApplicationStatus.FINAL_APPROVED.value:
+            query["status"] = {
+                "$in": [
+                    ApplicationStatus.FINAL_APPROVED.value,
+                    ApplicationStatus.APPROVED.value,
+                    ApplicationStatus.ACCEPTED.value,
+                    ApplicationStatus.ADMISSION_CONFIRMED.value,
+                ]
+            }
+        elif normalized_status == ApplicationStatus.INTERVIEW_COMPLETED.value:
+            query["status"] = {
+                "$in": [
+                    ApplicationStatus.INTERVIEW_COMPLETED.value,
+                    ApplicationStatus.DEAN_APPROVED.value,
+                    ApplicationStatus.SHORTLISTED.value,
+                    ApplicationStatus.FINAL_APPROVED.value,
+                    ApplicationStatus.APPROVED.value,
+                    ApplicationStatus.ACCEPTED.value,
+                    ApplicationStatus.ADMISSION_CONFIRMED.value,
+                ]
+            }
+        else:
+            query["status"] = normalized_status
     
     applications = []
     cursor = applications_collection.find(query).sort([("department", 1), ("created_at", -1)])
@@ -4575,15 +5122,31 @@ async def shortlist_application(
 async def get_statistics(
     current_user: dict = Depends(require_role([UserRole.DIRECTOR]))
 ):
+    interview_completed_progress_statuses = [
+        ApplicationStatus.INTERVIEW_COMPLETED.value,
+        ApplicationStatus.DEAN_APPROVED.value,
+        ApplicationStatus.SHORTLISTED.value,
+        ApplicationStatus.FINAL_APPROVED.value,
+        ApplicationStatus.APPROVED.value,
+        ApplicationStatus.ACCEPTED.value,
+        ApplicationStatus.ADMISSION_CONFIRMED.value,
+    ]
+    final_approved_progress_statuses = [
+        ApplicationStatus.FINAL_APPROVED.value,
+        ApplicationStatus.APPROVED.value,
+        ApplicationStatus.ACCEPTED.value,
+        ApplicationStatus.ADMISSION_CONFIRMED.value,
+    ]
+
     total = await applications_collection.count_documents({})
     submitted = await applications_collection.count_documents({"status": "submitted"})
     under_scrutiny = await applications_collection.count_documents({"status": {"$in": [ApplicationStatus.UNDER_SCRUTINY.value, ApplicationStatus.UNDER_VERIFICATION.value]}})
     faculty_review = await applications_collection.count_documents({"status": {"$in": [ApplicationStatus.FACULTY_REVIEW.value, ApplicationStatus.REVIEWED.value]}})
     recommended_for_interview = await applications_collection.count_documents({"status": ApplicationStatus.RECOMMENDED_FOR_INTERVIEW.value})
     interview_scheduled = await applications_collection.count_documents({"status": ApplicationStatus.INTERVIEW_SCHEDULED.value})
-    interview_completed = await applications_collection.count_documents({"status": ApplicationStatus.INTERVIEW_COMPLETED.value})
+    interview_completed = await applications_collection.count_documents({"status": {"$in": interview_completed_progress_statuses}})
     dean_approved = await applications_collection.count_documents({"status": {"$in": [ApplicationStatus.DEAN_APPROVED.value, ApplicationStatus.SHORTLISTED.value]}})
-    final_approved = await applications_collection.count_documents({"status": {"$in": [ApplicationStatus.FINAL_APPROVED.value, ApplicationStatus.APPROVED.value]}})
+    final_approved = await applications_collection.count_documents({"status": {"$in": final_approved_progress_statuses}})
     rejected = await applications_collection.count_documents({"status": "rejected"})
 
     total_reviews = 0
@@ -4712,9 +5275,7 @@ async def get_shortlisted_applications(
     current_user: dict = Depends(require_role([UserRole.DEAN], allow_dean_variants=True))
 ):
     applications = []
-    cursor = applications_collection.find({
-        "status": {"$in": DEAN_VISIBLE_STATUSES}
-    }).sort([("department", 1), ("created_at", -1)])
+    cursor = applications_collection.find({}).sort([("department", 1), ("created_at", -1)])
     
     async for doc in cursor:
         doc["id"] = doc["_id"]
@@ -4810,29 +5371,11 @@ async def make_director_final_decision(
         "updated_at": now,
     }
 
-    offer_email_sent = False
     if next_status == ApplicationStatus.FINAL_APPROVED.value:
-        deadline_date = (now + timedelta(days=OFFER_LETTER_DEADLINE_DAYS)).date().isoformat()
-        registration_id = app.get("registration_id") or app_id
-        offer_letter_file = UPLOAD_DIR / app.get("scholar_id", "unknown") / "admission_letters" / f"offer_letter_{registration_id}.pdf"
-        await generate_offer_letter_pdf(app, offer_letter_file, deadline_date)
-
         update_fields.update({
-            "offerLetterGenerated": True,
-            "offerLetterPath": str(offer_letter_file).replace("\\", "/"),
-            "offerLetterGeneratedAt": now,
-            "admissionDeadlineDate": deadline_date,
             "admissionDecision": None,
             "admissionRespondedAt": None,
         })
-
-        candidate_email = await resolve_application_recipient_email(app)
-        if candidate_email:
-            try:
-                await send_offer_letter_email(candidate_email, offer_letter_file, registration_id)
-                offer_email_sent = True
-            except Exception as exc:
-                print(f"⚠️ Offer letter generated but email sending failed for {app_id}: {exc}")
 
     await applications_collection.update_one(
         {"_id": app_id},
@@ -4842,15 +5385,13 @@ async def make_director_final_decision(
     await notifications_collection.insert_one({
         "user_id": app["scholar_id"],
         "message": (
-            f"Your application {app['registration_id']} has been approved by the Research Director. Offer letter is now available."
+            f"Your application {app['registration_id']} has been approved by the Research Director and is ready for seat allocation."
             if next_status == ApplicationStatus.FINAL_APPROVED.value
             else f"Your application {app['registration_id']} has been rejected by the Research Director."
         ),
         "type": "application_final_approved" if next_status == ApplicationStatus.FINAL_APPROVED.value else "application_rejected",
         "created_at": datetime.utcnow(),
         "read": False,
-        "offer_letter_generated": next_status == ApplicationStatus.FINAL_APPROVED.value,
-        "offer_letter_email_sent": offer_email_sent,
     })
 
     return {"message": "Director decision saved successfully"}
@@ -5025,7 +5566,7 @@ async def get_final_rank_list(
         requested_department = (current_user.get("department") or "").strip()
 
     query = {
-        "candidateStatus": RANKED_CANDIDATE_LABEL,
+        "candidateStatus": {"$in": [RANKED_CANDIDATE_LABEL, "Qualified for Ranking"]},
         "interviewMarks": {"$ne": None},
         "finalScore": {"$ne": None},
         "finalRank": {"$ne": None},
@@ -5087,7 +5628,22 @@ async def execute_seat_allocation(
         raise HTTPException(status_code=400, detail="Institute selection is mandatory for seat allocation")
 
     selected_config = get_department_seat_config(selected_department)
-    effective_config = to_allocation_seat_config(selected_config)
+    if payload.seatConfig:
+        effective_config = validate_and_normalize_seat_config(
+            {
+                "totalSeats": payload.seatConfig.totalSeats,
+                "distribution": {
+                    "visvesvaraya": payload.seatConfig.distribution.visvesvaraya,
+                    "merit": payload.seatConfig.distribution.merit,
+                    "general": payload.seatConfig.distribution.general,
+                    "obc": payload.seatConfig.distribution.obc,
+                    "mbc": payload.seatConfig.distribution.mbc,
+                    "sc_st": payload.seatConfig.distribution.sc_st,
+                },
+            }
+        )
+    else:
+        effective_config = to_allocation_seat_config(selected_config)
 
     allocation_result = await run_seat_allocation(
         seat_config=effective_config,

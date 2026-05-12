@@ -80,10 +80,25 @@ function ScholarDashboard({ user, onLogout }) {
   const [entranceExamPolicy, setEntranceExamPolicy] = useState(null);
 
   const calculatedApplicationFee = CONCESSION_CATEGORIES.has(formData.category) ? 1000 : 2000;
+  const minCgpaByCategory = {
+    SC: 7.5,
+    BC: 7.0,
+    MBC: 7.0,
+    OBC: 7.5,
+    GENERAL: 7.5
+  };
+  const minPercentageByCategory = {
+    SC: 50,
+    BC: 50,
+    MBC: 50,
+    OBC: 50,
+    GENERAL: 55
+  };
 
   const requiredFieldsByStep = {
     1: ['full_name', 'date_of_birth', 'gender', 'nationality', 'institution', 'mode_of_study', 'candidate_state_type', 'category', 'aadhaar_passport', 'mobile', 'email', 'permanent_address', 'communication_address'],
     2: ['ug_degree_name', 'ug_college_university', 'ug_branch_department', 'ug_year_of_passing', 'ug_cgpa_percentage'],
+    3: ['pg_degree_name', 'pg_college_university', 'pg_specialization', 'pg_year_of_passing', 'pg_cgpa_percentage'],
     4: ['exam_name', 'registration_number', 'year_of_exam', 'score_rank', 'validity_period'],
     5: ['area_of_interest', 'proposed_topic', 'statement_of_purpose', 'preferred_supervisor']
   };
@@ -107,6 +122,11 @@ function ScholarDashboard({ user, onLogout }) {
     ug_branch_department: 'UG Branch/Department',
     ug_year_of_passing: 'UG Year of Passing',
     ug_cgpa_percentage: 'UG CGPA/Percentage',
+    pg_degree_name: 'PG Degree Name',
+    pg_college_university: 'PG College/University',
+    pg_specialization: 'PG Specialization',
+    pg_year_of_passing: 'PG Year of Passing',
+    pg_cgpa_percentage: 'PG CGPA/Percentage',
     exam_name: 'Exam Name',
     registration_number: 'Registration Number',
     year_of_exam: 'Year of Exam',
@@ -120,6 +140,57 @@ function ScholarDashboard({ user, onLogout }) {
 
   const findMissingFields = (fields) => {
     return fields.filter((field) => !String(formData[field] || '').trim());
+  };
+
+  const validatePgAcademicEligibility = (category, pgValueInput) => {
+    const normalizedCategory = String(category || '').trim().toUpperCase();
+    const rawValue = String(pgValueInput || '').trim();
+
+    if (!rawValue) {
+      return {
+        valid: false,
+        message: 'Enter CGPA or Percentage'
+      };
+    }
+
+    const numericValue = parseFloat(rawValue);
+    if (!Number.isFinite(numericValue)) {
+      return {
+        valid: false,
+        message: 'Enter CGPA or Percentage'
+      };
+    }
+
+    const minCgpa = minCgpaByCategory[normalizedCategory] ?? minCgpaByCategory.GENERAL;
+    const minPercentage = minPercentageByCategory[normalizedCategory] ?? minPercentageByCategory.GENERAL;
+
+    const isPercentageInput = rawValue.includes('%') || numericValue > 10;
+
+    if (!isPercentageInput) {
+      if (numericValue < minCgpa) {
+        return {
+          valid: false,
+          message: `Minimum CGPA not met (minimum ${minCgpa})`
+        };
+      }
+
+      return {
+        valid: true,
+        rule: 'CGPA'
+      };
+    }
+
+    if (numericValue < minPercentage) {
+      return {
+        valid: false,
+        message: `Minimum Percentage not met (minimum ${minPercentage})`
+      };
+    }
+
+    return {
+      valid: true,
+      rule: 'Percentage'
+    };
   };
 
   useEffect(() => {
@@ -243,6 +314,16 @@ function ScholarDashboard({ user, onLogout }) {
       return;
     }
 
+    if (currentStep === 3) {
+      const category = formData.category;
+      const result = validatePgAcademicEligibility(category, formData.pg_cgpa_percentage);
+
+      if (!result.valid) {
+        setErrorMessage(result.message || 'Enter CGPA or Percentage');
+        return;
+      }
+    }
+
     setErrorMessage('');
     setCurrentStep(prev => Math.min(prev + 1, 7));
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -265,17 +346,47 @@ function ScholarDashboard({ user, onLogout }) {
   };
 
   const canDownloadOfferLetter = (app) => {
-    return ['final_approved', 'accepted', 'admission_confirmed'].includes(String(app?.status || '').toLowerCase());
+    return isSeatAllocated(app)
+      && ['final_approved', 'accepted', 'admission_confirmed'].includes(String(app?.status || '').toLowerCase());
   };
 
   const canRespondToOffer = (app) => {
     return String(app?.status || '').toLowerCase() === 'final_approved'
+      && isSeatAllocated(app)
       && !String(app?.admissionDecision || '').trim();
   };
 
   const canDownloadJoiningLetter = (app) => {
-    return String(app?.status || '').toLowerCase() === 'admission_confirmed'
-      && String(app?.registrationNumber || '').trim() !== '';
+    return isSeatAllocated(app)
+      && String(app?.status || '').toLowerCase() === 'admission_confirmed'
+      && (
+        String(app?.joiningLetterGeneratedAt || '').trim() !== ''
+        || Boolean(app?.joiningLetterGenerated)
+        || String(app?.joiningLetterPath || '').trim() !== ''
+        || String(app?.registrationNumber || '').trim() === ''
+      );
+  };
+
+  const canDownloadFinalFeeReceipt = (app) => {
+    return isSeatAllocated(app) && String(getCandidateFeeDetails(app).feeStatus).toLowerCase() === 'paid';
+  };
+
+  const isSeatAllocated = (app) => {
+    const seatStatus = String(
+      app?.seatAllocationStatus
+      || app?.seat_status
+      || app?.seatStatus
+      || ''
+    ).trim().toLowerCase();
+
+    return seatStatus === 'seat allocated' || seatStatus === 'allocated';
+  };
+
+  const isAdmissionAccepted = (app) => {
+    const admissionDecision = String(app?.admissionDecision || '').trim().toLowerCase();
+    const status = String(app?.status || '').trim().toLowerCase();
+
+    return admissionDecision === 'accept' || status === 'accepted' || status === 'admission_confirmed';
   };
 
   const canDownloadScrutinyVerificationReceipt = (app) => {
@@ -295,9 +406,9 @@ function ScholarDashboard({ user, onLogout }) {
     'Faculty Review',
     'Interview Completed',
     'Ranked',
-    'Seat Allocated',
     'Dean Approved',
     'Research Director Approved',
+    'Seat Allocated',
     'Offer Letter Generated',
     'Accepted',
     'Admission Confirmed'
@@ -347,7 +458,7 @@ function ScholarDashboard({ user, onLogout }) {
       interview_completed: 'Interview Completed',
       ranked: 'Ranked',
       seat_allocated: 'Seat Allocated',
-      dean_review: 'Seat Allocated',
+      dean_review: 'Dean Approved',
       dean_approved: 'Dean Approved',
       shortlisted: 'Dean Approved',
       final_approved: 'Research Director Approved',
@@ -360,8 +471,7 @@ function ScholarDashboard({ user, onLogout }) {
 
   const getWorkflowIndex = (app) => {
     const statusRaw = String(app?.status || '').toLowerCase().trim();
-    const mappedStage = mapBackendStatusToWorkflow(app?.status);
-    let index = mappedStage ? WORKFLOW_STAGES.indexOf(mappedStage) : -1;
+    let index = 0;
 
     const hasEntranceApplied = String(app?.entranceApplicationStatus || '').toLowerCase().includes('submit')
       || String(app?.entranceApplicationStatus || '').toLowerCase().includes('apply')
@@ -397,20 +507,46 @@ function ScholarDashboard({ user, onLogout }) {
       || app?.finalScore !== null
       || app?.finalScore !== undefined;
 
-    const hasSeatAllocated = statusRaw === 'seat_allocated'
-      || valueOrDash(app?.seatType) !== '-';
+    const directorDecision = String(app?.finalDecision?.decision || app?.final_decision?.decision || '').toLowerCase().trim();
+    const directorApproved = statusRaw === 'final_approved'
+      || directorDecision === 'approve'
+      || directorDecision === 'final_approved';
 
-    const hasDeanApproved = statusRaw === 'dean_approved' || statusRaw === 'shortlisted';
-    const hasDirectorApproved = statusRaw === 'final_approved';
-    const hasOfferLetter = Boolean(app?.offerLetterGenerated || app?.offerLetterPath)
+    const hasSeatAllocated = (
+      statusRaw === 'seat_allocated'
+      || valueOrDash(app?.seatType) !== '-'
+      || String(app?.seatAllocationStatus || '').trim().toLowerCase() === 'seat allocated'
+    ) && (
+      directorApproved
       || statusRaw === 'accepted'
-      || statusRaw === 'admission_confirmed';
-    const hasAccepted = statusRaw === 'accepted'
       || statusRaw === 'admission_confirmed'
-      || String(app?.admissionDecision || '').toLowerCase().trim() === 'accept';
-    const hasAdmissionConfirmed = statusRaw === 'admission_confirmed'
-      || valueOrDash(app?.registrationNumber) !== '-'
-      || Boolean(app?.joiningLetterGenerated || app?.joiningLetterPath);
+    );
+
+    const hasDeanApproved = statusRaw === 'dean_approved'
+      || statusRaw === 'shortlisted'
+      || statusRaw === 'dean_review'
+      || String(app?.dean_review?.decision || app?.deanReview?.decision || '').toLowerCase().trim() === 'approve';
+    const hasDirectorApproved = directorApproved;
+    const hasOfferLetter = isSeatAllocated(app)
+      && (
+        statusRaw === 'final_approved'
+        || statusRaw === 'accepted'
+        || statusRaw === 'admission_confirmed'
+        || directorDecision === 'approve'
+        || directorDecision === 'final_approved'
+      );
+    const hasAccepted = hasSeatAllocated
+      && (
+        statusRaw === 'accepted'
+        || statusRaw === 'admission_confirmed'
+        || String(app?.admissionDecision || '').toLowerCase().trim() === 'accept'
+      );
+    const hasAdmissionConfirmed = hasAccepted
+      && (
+        statusRaw === 'admission_confirmed'
+        || valueOrDash(app?.registrationNumber) !== '-'
+        || Boolean(app?.joiningLetterGenerated || app?.joiningLetterPath)
+      );
 
     if (normalizeScrutinyStatus(app) === 'Approved') index = Math.max(index, 1);
     if (hasEntranceApplied) index = Math.max(index, 2);
@@ -423,9 +559,9 @@ function ScholarDashboard({ user, onLogout }) {
     }
     if (hasInterviewCompleted) index = Math.max(index, 8);
     if (hasRanking) index = Math.max(index, 9);
-    if (hasSeatAllocated) index = Math.max(index, 10);
-    if (hasDeanApproved) index = Math.max(index, 11);
-    if (hasDirectorApproved) index = Math.max(index, 12);
+    if (hasDeanApproved) index = Math.max(index, 10);
+    if (hasDirectorApproved) index = Math.max(index, 11);
+    if (hasSeatAllocated) index = Math.max(index, 12);
     if (hasOfferLetter) index = Math.max(index, 13);
     if (hasAccepted) index = Math.max(index, 14);
     if (hasAdmissionConfirmed) index = Math.max(index, 15);
@@ -517,6 +653,15 @@ function ScholarDashboard({ user, onLogout }) {
     const currentIndex = getWorkflowIndex(app);
     const currentStage = WORKFLOW_STAGES[currentIndex] || 'Submitted';
     const scrutinyStatus = normalizeScrutinyStatus(app);
+    const statusRaw = String(app?.status || '').toLowerCase().trim();
+    const deanApproved = statusRaw === 'dean_approved'
+      || statusRaw === 'dean_review'
+      || statusRaw === 'shortlisted'
+      || String(app?.dean_review?.decision || app?.deanReview?.decision || '').toLowerCase().trim() === 'approve';
+    const directorDecision = String(app?.finalDecision?.decision || app?.final_decision?.decision || '').toLowerCase().trim();
+    const directorApproved = statusRaw === 'final_approved'
+      || directorDecision === 'approve'
+      || directorDecision === 'final_approved';
     const paymentStatus = valueOrDash(app.paymentStatus);
     const paymentInfo = [
       valueOrDash(app.paymentMethod),
@@ -533,10 +678,24 @@ function ScholarDashboard({ user, onLogout }) {
     const finalScore = valueOrDash(app.finalScore);
     const finalRank = valueOrDash(app.finalRank);
     const seatType = valueOrDash(app.seatType);
-    const seatStatus = valueOrDash(seatType !== '-' ? 'Allocated' : (currentIndex >= 10 ? 'Pending' : '-'));
-    const deanStatus = valueOrDash(currentIndex >= 11 ? 'Approved' : '-');
-    const directorStatus = valueOrDash(currentIndex >= 12 ? 'Approved' : '-');
+    const waitlistStatus = valueOrDash(app.waitlist_status);
+    const waitlistRank = valueOrDash(app.waitlist_rank);
+    const seatAllocationStatus = valueOrDash(app.seatAllocationStatus);
+    const seatStatus = valueOrDash(
+      seatAllocationStatus === 'Seat Lapsed'
+        ? 'Seat Lapsed'
+        : seatType !== '-'
+        ? 'Allocated'
+        : waitlistStatus !== '-'
+          ? waitlistStatus
+          : (currentIndex >= 10 ? 'Pending' : '-')
+    );
+    const deanStatus = valueOrDash(deanApproved ? 'Approved' : '-');
+    const directorStatus = valueOrDash(directorApproved ? 'Approved' : '-');
     const registrationNumber = valueOrDash(app.registrationNumber);
+    const registrationNumberDisplay = isSeatAllocated(app) && isAdmissionAccepted(app) && registrationNumber !== '-'
+      ? registrationNumber
+      : 'Not Generated';
     const admissionStatus = valueOrDash(currentIndex >= 14 ? 'Accepted' : '-');
     const institute = valueOrDash(getDisplayValue(app.institute, app.personal_details?.institution));
     const researchArea = valueOrDash(getDisplayValue(app.research_info?.area_of_interest, app.area_of_interest));
@@ -694,7 +853,21 @@ function ScholarDashboard({ user, onLogout }) {
           <div className="info-section-clean">
             <h4 className="section-title-clean">Admission Process</h4>
 
-            {currentIndex >= 10 && (
+            {deanApproved && (
+              <div className="info-row-clean">
+                <span className="info-label-clean">Dean Approval Status</span>
+                <span className="info-value-clean">{deanStatus}</span>
+              </div>
+            )}
+
+            {directorApproved && (
+              <div className="info-row-clean">
+                <span className="info-label-clean">Research Director Approval Status</span>
+                <span className="info-value-clean">{directorStatus}</span>
+              </div>
+            )}
+
+            {currentIndex >= 12 && (
               <>
                 <div className="info-row-clean">
                   <span className="info-label-clean">Seat Type</span>
@@ -704,43 +877,122 @@ function ScholarDashboard({ user, onLogout }) {
                   <span className="info-label-clean">Seat Status</span>
                   <span className="info-value-clean">{seatStatus}</span>
                 </div>
+                {waitlistStatus !== '-' && (
+                  <div className="info-row-clean">
+                    <span className="info-label-clean">Waitlist Rank</span>
+                    <span className="info-value-clean">{waitlistRank}</span>
+                  </div>
+                )}
+                
+                {/* ===== VISVESVARAYA SCHEME FELLOWSHIP DETAILS ===== */}
+                {String(seatType).toUpperCase() === 'VISVESVARAYA' && (
+                  <div style={{ marginTop: '15px', padding: '10px', border: '1px solid #ddd', borderRadius: '5px', backgroundColor: '#f9f9f9' }}>
+                    <h5 style={{ margin: '0 0 10px 0', color: '#333' }}>Visvesvaraya PhD Scheme (Phase-II) - Fellowship Support</h5>
+                    <div className="info-row-clean">
+                      <span className="info-label-clean">Fellowship Type</span>
+                      <span className="info-value-clean">{valueOrDash(app.fellowship_type || 'Visvesvaraya')}</span>
+                    </div>
+                    <div className="info-row-clean">
+                      <span className="info-label-clean">Scheme Phase</span>
+                      <span className="info-value-clean">{valueOrDash(app.visvesvaraya_scheme_phase || 'Phase-II')}</span>
+                    </div>
+                    <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #ccc' }}>
+                      <h6 style={{ margin: '5px 0', color: '#555', fontSize: '13px' }}>Financial Support</h6>
+                      <div className="info-row-clean">
+                        <span className="info-label-clean">Stipend (Year 1-2)</span>
+                        <span className="info-value-clean">₹{valueOrDash(app.stipend_year1_2 ? app.stipend_year1_2.toLocaleString() : '38,750')}/month</span>
+                      </div>
+                      <div className="info-row-clean">
+                        <span className="info-label-clean">Stipend (Year 3-5)</span>
+                        <span className="info-value-clean">₹{valueOrDash(app.stipend_year3_5 ? app.stipend_year3_5.toLocaleString() : '43,750')}/month</span>
+                      </div>
+                      <div className="info-row-clean">
+                        <span className="info-label-clean">Research Grant (Annual)</span>
+                        <span className="info-value-clean">₹{valueOrDash(app.research_grant_annual ? app.research_grant_annual.toLocaleString() : '1,20,000')}</span>
+                      </div>
+                      <div className="info-row-clean">
+                        <span className="info-label-clean">Rent Support</span>
+                        <span className="info-value-clean">{valueOrDash(app.rent_support || 'As per govt norms')}</span>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #ccc' }}>
+                      <h6 style={{ margin: '5px 0', color: '#555', fontSize: '13px' }}>Additional Support</h6>
+                      <div className="info-row-clean">
+                        <span className="info-label-clean">International Conference Support</span>
+                        <span className="info-value-clean">{valueOrDash(app.international_conference_support || 'From 3rd year onwards')}</span>
+                      </div>
+                      <div className="info-row-clean">
+                        <span className="info-label-clean">Lab Visit Abroad Support</span>
+                        <span className="info-value-clean">{valueOrDash(app.lab_visit_abroad_support || '6 months support')}</span>
+                      </div>
+                      <div className="info-row-clean">
+                        <span className="info-label-clean">Fellowship Duration</span>
+                        <span className="info-value-clean">Up to {valueOrDash(app.fellowship_duration_years || '5')} years or PhD completion</span>
+                      </div>
+                      <div className="info-row-clean">
+                        <span className="info-label-clean">Fellowship Status</span>
+                        <span className="info-value-clean" style={{ color: '#27ae60', fontWeight: 'bold' }}>{valueOrDash(app.fellowship_status || 'Active')}</span>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #ccc', fontSize: '12px', color: '#666' }}>
+                      <strong>Scheme Rules & Conditions:</strong>
+                      <ul style={{ margin: '5px 0', paddingLeft: '20px' }}>
+                        <li>Fellowship is allocated based on merit and scheme eligibility</li>
+                        <li>Candidate must maintain good academic progress throughout the program</li>
+                        <li>Fellowship can be terminated for poor progress or policy violation</li>
+                        <li>Annual performance monitoring is mandatory</li>
+                        <li>Seat allocation is final - no replacement after allocation</li>
+                      </ul>
+                    </div>
+                  </div>
+                )}
               </>
             )}
 
-            <div className="info-row-clean">
-              <span className="info-label-clean">Dean Approval Status</span>
-              <span className="info-value-clean">{deanStatus}</span>
-            </div>
-
-            <div className="info-row-clean">
-              <span className="info-label-clean">Research Director Approval Status</span>
-              <span className="info-value-clean">{directorStatus}</span>
-            </div>
-
             {currentIndex >= 13 && (
               <>
+                <div className="info-row-clean">
+                  <span className="info-label-clean">Offer Letter</span>
+                  <span className="info-value-clean">{canDownloadOfferLetter(app) ? 'Available' : 'Pending'}</span>
+                </div>
                 {canDownloadOfferLetter(app) && (
                   <button type="button" className="btn-clean primary" onClick={() => downloadOfferLetter(app.id)}>
                     Download Offer Letter
                   </button>
                 )}
-                <div className="button-group-clean" style={{ marginTop: '10px' }}>
-                  <button
-                    type="button"
-                    className="btn-clean accept"
-                    onClick={() => submitAdmissionDecision(app.id, 'accept')}
-                    disabled={loading || !canRespondToOffer(app)}
-                  >
-                    Accept Admission
+                {canRespondToOffer(app) && (
+                  <div className="button-group-clean" style={{ marginTop: '10px' }}>
+                    <button
+                      type="button"
+                      className="btn-clean accept"
+                      onClick={() => submitAdmissionDecision(app.id, 'accept')}
+                      disabled={loading}
+                    >
+                      Accept Admission
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-clean reject"
+                      onClick={() => submitAdmissionDecision(app.id, 'reject')}
+                      disabled={loading}
+                    >
+                      Reject Admission
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+
+            {currentIndex >= 15 && (
+              <>
+                {canDownloadJoiningLetter(app) && (
+                  <button type="button" className="btn-clean primary" onClick={() => downloadJoiningLetter(app.id)}>
+                    Download Joining Letter
                   </button>
-                  <button
-                    type="button"
-                    className="btn-clean reject"
-                    onClick={() => submitAdmissionDecision(app.id, 'reject')}
-                    disabled={loading || !canRespondToOffer(app)}
-                  >
-                    Reject Admission
-                  </button>
+                )}
+                <div className="info-row-clean">
+                  <span className="info-label-clean">Registration Number</span>
+                  <span className="info-value-clean register-badge">{registrationNumberDisplay}</span>
                 </div>
               </>
             )}
@@ -750,20 +1002,6 @@ function ScholarDashboard({ user, onLogout }) {
                 <span className="info-label-clean">Admission Status</span>
                 <span className="info-value-clean">{admissionStatus}</span>
               </div>
-            )}
-
-            {currentIndex >= 15 && (
-              <>
-                <div className="info-row-clean">
-                  <span className="info-label-clean">Registration Number</span>
-                  <span className="info-value-clean register-badge">{registrationNumber}</span>
-                </div>
-                {canDownloadJoiningLetter(app) && (
-                  <button type="button" className="btn-clean primary" onClick={() => downloadJoiningLetter(app.id)}>
-                    Download Joining Letter
-                  </button>
-                )}
-              </>
             )}
           </div>
         )}
@@ -789,9 +1027,70 @@ function ScholarDashboard({ user, onLogout }) {
             <div className="info-row-clean"><span className="info-label-clean">Final Rank</span><span className="info-value-clean">{finalRank}</span></div>
             <div className="info-row-clean"><span className="info-label-clean">Seat Type</span><span className="info-value-clean">{seatType}</span></div>
             <div className="info-row-clean"><span className="info-label-clean">Seat Status</span><span className="info-value-clean">{seatStatus}</span></div>
+            {waitlistStatus !== '-' && (
+              <div className="info-row-clean"><span className="info-label-clean">Waitlist Rank</span><span className="info-value-clean">{waitlistRank}</span></div>
+            )}
+            
+            {/* ===== VISVESVARAYA SCHEME SUMMARY ===== */}
+            {String(seatType).toUpperCase() === 'VISVESVARAYA' && (
+              <>
+                <div style={{ marginTop: '15px', marginBottom: '15px', padding: '12px', border: '2px solid #27ae60', borderRadius: '5px', backgroundColor: '#ecfdf5' }}>
+                  <h5 style={{ margin: '0 0 12px 0', color: '#27ae60' }}>Visvesvaraya PhD Scheme (Phase-II) Fellowship Award</h5>
+                  
+                  <div className="info-row-clean">
+                    <span className="info-label-clean">Fellowship Type</span>
+                    <span className="info-value-clean" style={{ color: '#27ae60', fontWeight: 'bold' }}>{valueOrDash(app.fellowship_type || 'Visvesvaraya')}</span>
+                  </div>
+                  <div className="info-row-clean">
+                    <span className="info-label-clean">Scheme Phase</span>
+                    <span className="info-value-clean">{valueOrDash(app.visvesvaraya_scheme_phase || 'Phase-II')}</span>
+                  </div>
+                  <div className="info-row-clean">
+                    <span className="info-label-clean">Fellowship Status</span>
+                    <span className="info-value-clean" style={{ color: '#27ae60', fontWeight: 'bold' }}>{valueOrDash(app.fellowship_status || 'Active')}</span>
+                  </div>
+                  
+                  <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #27ae60' }}>
+                    <h6 style={{ margin: '5px 0 8px 0', color: '#27ae60', fontSize: '14px' }}>Financial Support Package</h6>
+                    <div className="info-row-clean">
+                      <span className="info-label-clean">Monthly Stipend (Year 1-2)</span>
+                      <span className="info-value-clean" style={{ fontWeight: 'bold' }}>₹{valueOrDash(app.stipend_year1_2 ? app.stipend_year1_2.toLocaleString() : '38,750')}</span>
+                    </div>
+                    <div className="info-row-clean">
+                      <span className="info-label-clean">Monthly Stipend (Year 3-5)</span>
+                      <span className="info-value-clean" style={{ fontWeight: 'bold' }}>₹{valueOrDash(app.stipend_year3_5 ? app.stipend_year3_5.toLocaleString() : '43,750')}</span>
+                    </div>
+                    <div className="info-row-clean">
+                      <span className="info-label-clean">Annual Research Grant</span>
+                      <span className="info-value-clean" style={{ fontWeight: 'bold' }}>₹{valueOrDash(app.research_grant_annual ? app.research_grant_annual.toLocaleString() : '1,20,000')}</span>
+                    </div>
+                    <div className="info-row-clean">
+                      <span className="info-label-clean">Rent Support</span>
+                      <span className="info-value-clean">{valueOrDash(app.rent_support || 'As per govt norms')}</span>
+                    </div>
+                    <div className="info-row-clean">
+                      <span className="info-label-clean">International Conference Support</span>
+                      <span className="info-value-clean">{valueOrDash(app.international_conference_support || 'From 3rd year onwards')}</span>
+                    </div>
+                    <div className="info-row-clean">
+                      <span className="info-label-clean">Lab Visit Abroad Support</span>
+                      <span className="info-value-clean">{valueOrDash(app.lab_visit_abroad_support || '6 months support')}</span>
+                    </div>
+                    <div className="info-row-clean">
+                      <span className="info-label-clean">Fellowship Duration</span>
+                      <span className="info-value-clean">Up to {valueOrDash(app.fellowship_duration_years || '5')} years</span>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+            
             <div className="info-row-clean"><span className="info-label-clean">Institute</span><span className="info-value-clean">{institute}</span></div>
             <div className="info-row-clean"><span className="info-label-clean">Admission Status</span><span className="info-value-clean">{admissionStatus}</span></div>
-            <div className="info-row-clean"><span className="info-label-clean">Registration Number</span><span className="info-value-clean">{registrationNumber}</span></div>
+            {canDownloadJoiningLetter(app) && (
+              <div className="info-row-clean"><span className="info-label-clean">Joining Letter</span><span className="info-value-clean">Available</span></div>
+            )}
+            <div className="info-row-clean"><span className="info-label-clean">Registration Number</span><span className="info-value-clean">{registrationNumberDisplay}</span></div>
             <div className="info-row-clean"><span className="info-label-clean">Fee Amount</span><span className="info-value-clean">{feeAmountText}</span></div>
             <div className="info-row-clean"><span className="info-label-clean">Fee Status</span><span className={`info-value-clean ${String(feeDetails.feeStatus).toLowerCase() === 'paid' ? 'status-green' : 'status-pending'}`}>{feeStatusText}</span></div>
             {String(feeDetails.feeStatus).toLowerCase() === 'paid' && (
@@ -801,17 +1100,19 @@ function ScholarDashboard({ user, onLogout }) {
                 <div className="info-row-clean"><span className="info-label-clean">Transaction ID</span><span className="info-value-clean">{feeTxnText}</span></div>
               </>
             )}
-            {String(feeDetails.feeStatus).toLowerCase() !== 'paid' ? (
-              <button type="button" className="btn-clean primary" onClick={() => payFees(app)}>
-                Pay Fees
-              </button>
-            ) : (
-              <button type="button" className="btn-clean secondary" onClick={() => downloadFeeReceipt(app)}>
-                Download Receipt
-              </button>
+            {isSeatAllocated(app) && (
+              canDownloadFinalFeeReceipt(app) ? (
+                <button type="button" className="btn-clean secondary" onClick={() => downloadFeeReceipt(app)}>
+                  Download Receipt
+                </button>
+              ) : String(feeDetails.feeStatus).toLowerCase() !== 'paid' ? (
+                <button type="button" className="btn-clean primary" onClick={() => payFees(app)}>
+                  Pay Fees
+                </button>
+              ) : (
+                null
+              )
             )}
-            <div className="info-row-clean"><span className="info-label-clean">Offer Letter</span><span className="info-value-clean">{valueOrDash(canDownloadOfferLetter(app) ? 'Available' : '-')}</span></div>
-            <div className="info-row-clean"><span className="info-label-clean">Joining Letter</span><span className="info-value-clean">{valueOrDash(canDownloadJoiningLetter(app) ? 'Available' : '-')}</span></div>
             <div className="info-row-clean"><span className="info-label-clean">Final Status</span><span className="info-value-clean">Admission Confirmed</span></div>
             <div className="info-row-clean"><span className="info-label-clean">Research Area</span><span className="info-value-clean">{researchArea}</span></div>
           </div>
@@ -1230,14 +1531,17 @@ function ScholarDashboard({ user, onLogout }) {
 
           {currentStep === 3 && (
             <div className="form-section">
-              <h3>PG Academic Details (Optional)</h3>
+              <h3>PG Academic Details</h3>
               <div className="form-grid">
-                <input type="text" name="pg_degree_name" value={formData.pg_degree_name} onChange={handleChange} placeholder="Degree Name" />
-                <input type="text" name="pg_college_university" value={formData.pg_college_university} onChange={handleChange} placeholder="College/University" />
-                <input type="text" name="pg_specialization" value={formData.pg_specialization} onChange={handleChange} placeholder="Specialization" />
-                <input type="text" name="pg_year_of_passing" value={formData.pg_year_of_passing} onChange={handleChange} placeholder="Year of Passing" />
-                <input type="text" name="pg_cgpa_percentage" value={formData.pg_cgpa_percentage} onChange={handleChange} placeholder="CGPA/Percentage" />
+                <input type="text" name="pg_degree_name" value={formData.pg_degree_name} onChange={handleChange} placeholder="Degree Name *" required />
+                <input type="text" name="pg_college_university" value={formData.pg_college_university} onChange={handleChange} placeholder="College/University *" required />
+                <input type="text" name="pg_specialization" value={formData.pg_specialization} onChange={handleChange} placeholder="Specialization *" required />
+                <input type="text" name="pg_year_of_passing" value={formData.pg_year_of_passing} onChange={handleChange} placeholder="Year of Passing *" required />
+                <input type="text" name="pg_cgpa_percentage" value={formData.pg_cgpa_percentage} onChange={handleChange} placeholder="CGPA/Percentage *" required />
               </div>
+              {errorMessage && (
+                <p style={{ color: 'red', marginTop: '8px' }}>{errorMessage}</p>
+              )}
             </div>
           )}
 
@@ -1517,15 +1821,13 @@ function ScholarDashboard({ user, onLogout }) {
           </div>
 
           {successMessage && <div className="alert alert-success">{successMessage}</div>}
-          {errorMessage && <div className="alert alert-error">{errorMessage}</div>}
+          {errorMessage && currentStep !== 3 && <p style={{ color: 'red' }}>{errorMessage}</p>}
         </form>
       </div>
     );
   };
 
   if (view === 'apply') {
-    // Clear any leftover messages when entering apply view
-    if (errorMessage) setErrorMessage('');
     return renderApplicationForm();
   }
 

@@ -126,14 +126,7 @@ function DeanDashboard({ user, onLogout }) {
   const selectedDocuments = selectedApp ? getUploadedDocuments(selectedApp) : [];
   const selectedAverageScore = selectedApp ? calculateAverageReviewScore(selectedApp.reviews) : 'N/A';
   const deanActionEligibleStatuses = new Set([
-    'faculty_review',
-    'recommended_for_interview',
-    'interview_scheduled',
-    'interview_completed',
-    'dean_review',
-    'ranked',
-    'seat_allocated',
-    'shortlisted'
+    'interview_completed'
   ]);
   const selectedStatusRaw = String(selectedApp?.status || '').toLowerCase();
   const canSubmitDeanDecision = Boolean(selectedApp)
@@ -153,7 +146,7 @@ function DeanDashboard({ user, onLogout }) {
       <div className="dashboard-content">
         <div className="welcome-banner">
           <h1>Welcome, Dean {user.full_name}!</h1>
-          <p>Review interview-cleared applications and make the Dean-level decision.</p>
+          <p>Review all applications and make the Dean-level decision when eligible.</p>
         </div>
 
         <div className="info-banner">
@@ -167,8 +160,8 @@ function DeanDashboard({ user, onLogout }) {
 
         {!loading && applications.length === 0 && (
           <div className="empty-state">
-            <h3>No Applications Pending</h3>
-            <p>There are currently no interview-cleared applications awaiting your decision.</p>
+            <h3>No Applications Available</h3>
+            <p>There are currently no applications to display.</p>
           </div>
         )}
 
